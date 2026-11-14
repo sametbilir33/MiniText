@@ -14,6 +14,7 @@ test_save_and_load_round_trip(void)
     GFile *file = g_file_new_for_path(path);
     GtkTextBuffer *source = gtk_text_buffer_new(NULL);
     GtkTextBuffer *destination = gtk_text_buffer_new(NULL);
+    gtk_text_buffer_set_enable_undo(destination, TRUE);
     const char *text = "MiniText UTF-8: Türkçe\nİkinci satır\n";
     gtk_text_buffer_set_text(source, text, -1);
 
@@ -22,6 +23,7 @@ test_save_and_load_round_trip(void)
 
     g_assert_true(file_manager_load(file, destination, &error));
     g_assert_no_error(error);
+    g_assert_false(gtk_text_buffer_get_can_undo(destination));
 
     GtkTextIter start;
     GtkTextIter end;
@@ -37,6 +39,7 @@ test_save_and_load_round_trip(void)
     gtk_text_buffer_set_text(destination, "", -1);
     g_assert_true(file_manager_load(file, destination, &error));
     g_assert_no_error(error);
+    g_assert_false(gtk_text_buffer_get_can_undo(destination));
 
     gtk_text_buffer_get_bounds(destination, &start, &end);
     loaded_text = gtk_text_buffer_get_text(destination, &start, &end, FALSE);

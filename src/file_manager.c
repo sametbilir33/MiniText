@@ -30,7 +30,9 @@ file_manager_load(GFile *file, GtkTextBuffer *buffer, GError **error)
         return FALSE;
     }
 
+    gtk_text_buffer_begin_irreversible_action(buffer);
     gtk_text_buffer_set_text(buffer, contents, (gint)length);
+    gtk_text_buffer_end_irreversible_action(buffer);
     g_free(contents);
     return TRUE;
 }

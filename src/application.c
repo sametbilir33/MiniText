@@ -79,6 +79,52 @@ on_action_find(GSimpleAction *action,
 }
 
 static void
+on_action_replace(GSimpleAction *action,
+                  GVariant *parameter,
+                  gpointer user_data)
+{
+    (void)action;
+    (void)parameter;
+
+    GtkWindow *window =
+        gtk_application_get_active_window(GTK_APPLICATION(user_data));
+    if (window != NULL) {
+        mini_text_window_activate_action(
+            window,
+            MINITEXT_WINDOW_ACTION_REPLACE
+        );
+    }
+}
+
+static void
+on_action_undo(GSimpleAction *action,
+               GVariant *parameter,
+               gpointer user_data)
+{
+    (void)action;
+    (void)parameter;
+
+    GtkWindow *window =
+        gtk_application_get_active_window(GTK_APPLICATION(user_data));
+    if (window != NULL)
+        mini_text_window_activate_action(window, MINITEXT_WINDOW_ACTION_UNDO);
+}
+
+static void
+on_action_redo(GSimpleAction *action,
+               GVariant *parameter,
+               gpointer user_data)
+{
+    (void)action;
+    (void)parameter;
+
+    GtkWindow *window =
+        gtk_application_get_active_window(GTK_APPLICATION(user_data));
+    if (window != NULL)
+        mini_text_window_activate_action(window, MINITEXT_WINDOW_ACTION_REDO);
+}
+
+static void
 on_action_go_to_line(GSimpleAction *action,
                      GVariant *parameter,
                      gpointer user_data)
@@ -105,17 +151,18 @@ on_action_about(GSimpleAction *action,
     (void)parameter;
 
     GtkApplication *app = GTK_APPLICATION(user_data);
-    GtkWidget *parent = GTK_WIDGET(
-    gtk_application_get_active_window(app)
-);
+    GtkWindow *parent = gtk_application_get_active_window(app);
 
     adw_show_about_dialog(
-        parent,
+        GTK_WIDGET(parent),
         "application-name", "MiniText",
         "application-icon", "io.github.sametbilir33.MiniText",
+        "version", "1.0.0",
         "developer-name", "Samet Bilir",
         "comments", "Minimalist bir metin düzenleyici.",
-        "website", "https://github.com/sametbilir33",
+        "website", "https://github.com/sametbilir33/MiniText",
+        "issue-url", "https://github.com/sametbilir33/MiniText/issues",
+        "license-type", GTK_LICENSE_GPL_3_0,
         NULL
     );
 }
@@ -165,6 +212,9 @@ mini_text_application_run(int argc, char **argv)
     add_action(application, "save", G_CALLBACK(on_action_save));
     add_action(application, "save-as", G_CALLBACK(on_action_save_as));
     add_action(application, "find", G_CALLBACK(on_action_find));
+    add_action(application, "replace", G_CALLBACK(on_action_replace));
+    add_action(application, "undo", G_CALLBACK(on_action_undo));
+    add_action(application, "redo", G_CALLBACK(on_action_redo));
     add_action(application, "go-to-line", G_CALLBACK(on_action_go_to_line));
     add_action(application, "about", G_CALLBACK(on_action_about));
     gtk_application_set_accels_for_action(
@@ -191,6 +241,21 @@ mini_text_application_run(int argc, char **argv)
         GTK_APPLICATION(application),
         "app.find",
         (const char *[]){"<Primary>f", NULL}
+    );
+    gtk_application_set_accels_for_action(
+        GTK_APPLICATION(application),
+        "app.replace",
+        (const char *[]){"<Primary>h", NULL}
+    );
+    gtk_application_set_accels_for_action(
+        GTK_APPLICATION(application),
+        "app.undo",
+        (const char *[]){"<Primary>z", NULL}
+    );
+    gtk_application_set_accels_for_action(
+        GTK_APPLICATION(application),
+        "app.redo",
+        (const char *[]){"<Primary><Shift>z", "<Primary>y", NULL}
     );
     gtk_application_set_accels_for_action(
         GTK_APPLICATION(application),

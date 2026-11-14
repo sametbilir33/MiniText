@@ -27,12 +27,11 @@ smoke test and requires an active graphical session.
 
 ## Features
 
-- Create, open, save, and save as UTF-8 text files
-- Prompts before discarding unsaved changes, including when closing the window
-- Searches the current document and jumps directly to a line
-- Offers to save, discard, or cancel before replacing/closing modified text
-- Synchronized line numbers alongside the editor
-- Wrapped text and a monospace editing surface
+- UTF-8 text editing with file open, save, and save-as support
+- Find and replace, including case-sensitive search and replace all
+- Undo and redo, with bulk replacements grouped as one action
+- Line navigation, synchronized line numbers, and wrapped monospace text
+- Prompts before discarding unsaved changes
 
 ## Keyboard shortcuts
 
@@ -43,7 +42,13 @@ smoke test and requires an active graphical session.
 | Save | Ctrl+S |
 | Save as | Ctrl+Shift+S |
 | Find | Ctrl+F |
+| Find and replace | Ctrl+H |
+| Undo | Ctrl+Z |
+| Redo | Ctrl+Shift+Z or Ctrl+Y |
 | Go to line | Ctrl+L |
+
+When the search field is active, Enter moves to the next match, Shift+Enter
+moves to the previous match, and Escape closes the search bar.
 
 The application is split into `application`, `window`, `editor`,
 `line_numbers`, and `file_manager` modules under `src/`.

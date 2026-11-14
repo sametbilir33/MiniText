@@ -1,6 +1,7 @@
 #include "window.h"
 
 #include <adwaita.h>
+#include <string.h>
 
 static GtkTextView *
 find_text_view(GtkWidget *widget)
@@ -31,6 +32,28 @@ find_search_entry(GtkWidget *widget)
         GtkSearchEntry *search_entry = find_search_entry(child);
         if (search_entry != NULL)
             return search_entry;
+    }
+
+    return NULL;
+}
+
+static GtkEntry *
+find_entry_by_placeholder(GtkWidget *widget, const char *placeholder)
+{
+    if (GTK_IS_ENTRY(widget) &&
+        g_strcmp0(
+            gtk_entry_get_placeholder_text(GTK_ENTRY(widget)),
+            placeholder
+        ) == 0) {
+        return GTK_ENTRY(widget);
+    }
+
+    for (GtkWidget *child = gtk_widget_get_first_child(widget);
+         child != NULL;
+         child = gtk_widget_get_next_sibling(child)) {
+        GtkEntry *entry = find_entry_by_placeholder(child, placeholder);
+        if (entry != NULL)
+            return entry;
     }
 
     return NULL;
@@ -122,11 +145,14 @@ close_window(gpointer user_data)
         NULL
     );
     g_assert_true(gtk_window_get_resizable(window));
-    g_assert_cmpint(minimum_width, <=, 440);
+    g_assert_cmpint(minimum_width, <=, 460);
     g_assert_cmpint(minimum_height, <=, 200);
 
     GtkTextView *text_view = find_text_view(content);
     g_assert_nonnull(text_view);
+    g_assert_nonnull(find_icon(content, "io.github.sametbilir33.MiniText"));
+    GtkSearchEntry *search_entry = find_search_entry(content);
+    g_assert_nonnull(search_entry);
     g_assert_nonnull(find_icon(content, "go-jump-symbolic"));
     GtkTextIter first_line;
     gtk_text_buffer_get_start_iter(gtk_text_view_get_buffer(text_view),
@@ -190,6 +216,97 @@ close_window(gpointer user_data)
     );
     g_assert_cmpint(gtk_text_iter_get_line(&cursor), ==, 24);
 
+    mini_text_window_activate_action(
+        window,
+        MINITEXT_WINDOW_ACTION_REPLACE
+    );
+    GtkEntry *replace_entry = find_entry_by_placeholder(
+        gtk_window_get_child(window),
+        "Yeni metin"
+    );
+    GtkButton *replace_current_button = find_button_by_label(
+        gtk_window_get_child(window),
+        "Değiştir"
+    );
+    GtkButton *replace_all_button = find_button_by_label(
+        gtk_window_get_child(window),
+        "Tümünü Değiştir"
+    );
+    g_assert_nonnull(replace_entry);
+    g_assert_nonnull(replace_current_button);
+    g_assert_nonnull(replace_all_button);
+    gtk_editable_set_text(GTK_EDITABLE(search_entry), "Resize");
+    gtk_editable_set_text(GTK_EDITABLE(replace_entry), "Changed");
+
+    g_signal_emit_by_name(replace_current_button, "clicked");
+    GtkTextIter document_start;
+    GtkTextIter document_end;
+    gtk_text_buffer_get_bounds(buffer, &document_start, &document_end);
+    char *current_replaced_text = gtk_text_buffer_get_text(
+        buffer,
+        &document_start,
+        &document_end,
+        FALSE
+    );
+    char *first_changed = g_strstr_len(current_replaced_text, -1, "Changed");
+    g_assert_nonnull(first_changed);
+    g_assert_null(g_strstr_len(first_changed + strlen("Changed"), -1, "Changed"));
+    g_free(current_replaced_text);
+    mini_text_window_activate_action(window, MINITEXT_WINDOW_ACTION_UNDO);
+
+    g_signal_emit_by_name(replace_all_button, "clicked");
+
+    gtk_text_buffer_get_bounds(buffer, &document_start, &document_end);
+    char *replaced_text = gtk_text_buffer_get_text(
+        buffer,
+        &document_start,
+        &document_end,
+        FALSE
+    );
+    g_assert_null(g_strstr_len(replaced_text, -1, "Resize"));
+    g_assert_nonnull(g_strstr_len(replaced_text, -1, "Changed"));
+    g_free(replaced_text);
+
+    mini_text_window_activate_action(window, MINITEXT_WINDOW_ACTION_UNDO);
+    gtk_text_buffer_get_bounds(buffer, &document_start, &document_end);
+    char *undone_text = gtk_text_buffer_get_text(
+        buffer,
+        &document_start,
+        &document_end,
+        FALSE
+    );
+    g_assert_nonnull(g_strstr_len(undone_text, -1, "Resize"));
+    g_assert_null(g_strstr_len(undone_text, -1, "Changed"));
+    g_free(undone_text);
+
+    mini_text_window_activate_action(window, MINITEXT_WINDOW_ACTION_REDO);
+    gtk_text_buffer_get_bounds(buffer, &document_start, &document_end);
+    char *redone_text = gtk_text_buffer_get_text(
+        buffer,
+        &document_start,
+        &document_end,
+        FALSE
+    );
+    g_assert_null(g_strstr_len(redone_text, -1, "Resize"));
+    g_assert_nonnull(g_strstr_len(redone_text, -1, "Changed"));
+    g_free(redone_text);
+
+    gtk_editable_set_text(GTK_EDITABLE(search_entry), "İstanbul");
+    g_signal_emit_by_name(search_entry, "search-changed");
+    g_assert_true(gtk_text_buffer_get_selection_bounds(
+        buffer,
+        &match_start,
+        &match_end
+    ));
+    char *turkish_match = gtk_text_buffer_get_text(
+        buffer,
+        &match_start,
+        &match_end,
+        FALSE
+    );
+    g_assert_cmpstr(turkish_match, ==, "İstanbul");
+    g_free(turkish_match);
+
     gtk_window_destroy(window);
     g_object_unref(window);
     return G_SOURCE_REMOVE;
@@ -211,6 +328,7 @@ on_activate(GtkApplication *application, gpointer user_data)
     g_string_append_c(text, '\n');
     for (int line = 0; line < 2000; line++)
         g_string_append(text, "Resize test line\n");
+    g_string_append(text, "Türkçe karakter: İstanbul\n");
     gtk_text_buffer_set_text(
         gtk_text_view_get_buffer(text_view),
         text->str,

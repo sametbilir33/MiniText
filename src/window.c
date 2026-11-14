@@ -17,6 +17,10 @@ typedef struct {
     MiniTextEditor *editor;
     GtkSearchBar *search_bar;
     GtkSearchEntry *search_entry;
+    GtkEntry *replace_entry;
+    GtkWidget *replace_revealer;
+    GtkCheckButton *case_sensitive;
+    GtkLabel *search_status;
     GFile *file;
     gboolean modified;
     gboolean loading;
@@ -66,6 +70,13 @@ show_error(MiniTextWindowState *state,
     gtk_alert_dialog_set_detail(dialog, detail);
     gtk_alert_dialog_show(dialog, state->window);
     g_object_unref(dialog);
+}
+
+static void
+set_search_status(MiniTextWindowState *state, const char *message)
+{
+    gtk_label_set_text(state->search_status, message);
+    gtk_widget_set_visible(GTK_WIDGET(state->search_status), message[0] != '\0');
 }
 
 static void
@@ -243,12 +254,11 @@ show_open_dialog(MiniTextWindowState *state)
 static void
 clear_document(MiniTextWindowState *state)
 {
+    GtkTextBuffer *buffer = mini_text_editor_get_buffer(state->editor);
     state->loading = TRUE;
-    gtk_text_buffer_set_text(
-        mini_text_editor_get_buffer(state->editor),
-        "",
-        -1
-    );
+    gtk_text_buffer_begin_irreversible_action(buffer);
+    gtk_text_buffer_set_text(buffer, "", -1);
+    gtk_text_buffer_end_irreversible_action(buffer);
     state->loading = FALSE;
     g_clear_object(&state->file);
     state->modified = FALSE;
@@ -367,6 +377,7 @@ search_document(MiniTextWindowState *state,
             GTK_WIDGET(state->search_entry),
             "error"
         );
+        set_search_status(state, "");
         return FALSE;
     }
 
@@ -396,7 +407,9 @@ search_document(MiniTextWindowState *state,
 
     GtkTextIter match_start;
     GtkTextIter match_end;
-    GtkTextSearchFlags flags = GTK_TEXT_SEARCH_CASE_INSENSITIVE;
+    GtkTextSearchFlags flags = gtk_check_button_get_active(
+        state->case_sensitive
+    ) ? (GtkTextSearchFlags)0 : GTK_TEXT_SEARCH_CASE_INSENSITIVE;
     gboolean found = backwards
         ? gtk_text_iter_backward_search(
               &iter,
@@ -445,10 +458,12 @@ search_document(MiniTextWindowState *state,
             GTK_WIDGET(state->search_entry),
             "error"
         );
+        set_search_status(state, "Eşleşme bulunamadı");
         return FALSE;
     }
 
     gtk_widget_remove_css_class(GTK_WIDGET(state->search_entry), "error");
+    set_search_status(state, "");
     gtk_text_buffer_select_range(buffer, &match_end, &match_start);
     gtk_text_view_scroll_to_iter(
         mini_text_editor_get_text_view(state->editor),
@@ -480,6 +495,159 @@ on_find_previous(GtkButton *button, gpointer user_data)
 {
     (void)button;
     search_document(user_data, TRUE, FALSE);
+}
+
+static gboolean
+on_search_entry_key_pressed(GtkEventControllerKey *controller,
+                            guint keyval,
+                            guint keycode,
+                            GdkModifierType state_flags,
+                            gpointer user_data)
+{
+    (void)controller;
+    (void)keycode;
+
+    MiniTextWindowState *state = user_data;
+    if (keyval == GDK_KEY_Escape) {
+        gtk_search_bar_set_search_mode(state->search_bar, FALSE);
+        gtk_widget_grab_focus(
+            GTK_WIDGET(mini_text_editor_get_text_view(state->editor))
+        );
+        return TRUE;
+    }
+
+    if (keyval != GDK_KEY_Return && keyval != GDK_KEY_KP_Enter)
+        return FALSE;
+
+    if ((state_flags & GDK_SHIFT_MASK) != 0)
+        search_document(state, TRUE, FALSE);
+    else
+        search_document(state, FALSE, FALSE);
+    return TRUE;
+}
+
+static gboolean
+text_matches_query(const char *text,
+                   const char *query,
+                   gboolean case_sensitive)
+{
+    if (case_sensitive)
+        return g_strcmp0(text, query) == 0;
+
+    char *folded_text = g_utf8_casefold(text, -1);
+    char *folded_query = g_utf8_casefold(query, -1);
+    gboolean matches = g_strcmp0(folded_text, folded_query) == 0;
+    g_free(folded_text);
+    g_free(folded_query);
+    return matches;
+}
+
+static void
+on_replace_current(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    MiniTextWindowState *state = user_data;
+    const char *query = gtk_editable_get_text(
+        GTK_EDITABLE(state->search_entry)
+    );
+    if (query[0] == '\0')
+        return;
+
+    GtkTextBuffer *buffer = mini_text_editor_get_buffer(state->editor);
+    GtkTextIter start;
+    GtkTextIter end;
+    gboolean has_selection = gtk_text_buffer_get_selection_bounds(
+        buffer,
+        &start,
+        &end
+    );
+    gboolean case_sensitive = gtk_check_button_get_active(
+        state->case_sensitive
+    );
+    char *selected_text = has_selection
+        ? gtk_text_buffer_get_text(buffer, &start, &end, FALSE)
+        : NULL;
+    gboolean current_match = selected_text != NULL &&
+        text_matches_query(selected_text, query, case_sensitive);
+    g_free(selected_text);
+
+    if (!current_match) {
+        if (!search_document(state, FALSE, FALSE))
+            return;
+        gtk_text_buffer_get_selection_bounds(buffer, &start, &end);
+    }
+
+    const char *replacement = gtk_editable_get_text(
+        GTK_EDITABLE(state->replace_entry)
+    );
+    gtk_text_buffer_begin_user_action(buffer);
+    gtk_text_buffer_delete(buffer, &start, &end);
+    gtk_text_buffer_insert(buffer, &start, replacement, -1);
+    gtk_text_buffer_end_user_action(buffer);
+
+    if (!search_document(state, FALSE, FALSE))
+        set_search_status(state, "Eşleşme değiştirildi; başka eşleşme yok");
+}
+
+static void
+on_replace_all(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    MiniTextWindowState *state = user_data;
+    const char *query = gtk_editable_get_text(
+        GTK_EDITABLE(state->search_entry)
+    );
+    if (query[0] == '\0')
+        return;
+
+    const char *replacement = gtk_editable_get_text(
+        GTK_EDITABLE(state->replace_entry)
+    );
+    GtkTextBuffer *buffer = mini_text_editor_get_buffer(state->editor);
+    GtkTextSearchFlags flags = gtk_check_button_get_active(
+        state->case_sensitive
+    ) ? (GtkTextSearchFlags)0 : GTK_TEXT_SEARCH_CASE_INSENSITIVE;
+    GtkTextIter iter;
+    gtk_text_buffer_get_start_iter(buffer, &iter);
+    guint replaced_count = 0;
+
+    gtk_text_buffer_begin_user_action(buffer);
+    GtkTextIter match_start;
+    GtkTextIter match_end;
+    while (gtk_text_iter_forward_search(
+        &iter,
+        query,
+        flags,
+        &match_start,
+        &match_end,
+        NULL
+    )) {
+        gtk_text_buffer_delete(buffer, &match_start, &match_end);
+        gtk_text_buffer_insert(buffer, &match_start, replacement, -1);
+        iter = match_start;
+        replaced_count++;
+    }
+    gtk_text_buffer_end_user_action(buffer);
+
+    gtk_widget_remove_css_class(GTK_WIDGET(state->search_entry), "error");
+    if (replaced_count == 0) {
+        set_search_status(state, "Eşleşme bulunamadı");
+    } else {
+        char *message = g_strdup_printf(
+            "%u eşleşme değiştirildi",
+            replaced_count
+        );
+        set_search_status(state, message);
+        g_free(message);
+    }
+}
+
+static void
+on_case_sensitive_toggled(GtkCheckButton *button, gpointer user_data)
+{
+    (void)button;
+    MiniTextWindowState *state = user_data;
+    search_document(state, FALSE, TRUE);
 }
 
 static void
@@ -622,6 +790,10 @@ mini_text_window_new(GtkApplication *application)
     MiniTextWindowState *state = g_new0(MiniTextWindowState, 1);
     state->window = GTK_WINDOW(window);
     state->editor = mini_text_editor_new();
+    gtk_text_buffer_set_enable_undo(
+        mini_text_editor_get_buffer(state->editor),
+        TRUE
+    );
     g_object_set_data_full(
         G_OBJECT(window),
         "mini-text-window-state",
@@ -631,48 +803,49 @@ mini_text_window_new(GtkApplication *application)
 
     GtkWidget *root = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     GtkWidget *header = adw_header_bar_new();
+    GtkWidget *application_icon =
+        gtk_image_new_from_icon_name("io.github.sametbilir33.MiniText");
     GtkWidget *new_button =
         gtk_button_new_from_icon_name("document-new-symbolic");
     GtkWidget *open_button =
         gtk_button_new_from_icon_name("document-open-symbolic");
     GtkWidget *save_button =
         gtk_button_new_from_icon_name("document-save-symbolic");
-    GtkWidget *save_as_button =
-        gtk_button_new_from_icon_name("document-save-as-symbolic");
     GtkWidget *find_button =
         gtk_button_new_from_icon_name("edit-find-symbolic");
     GtkWidget *go_to_line_button =
-        gtk_button_new_from_icon_name("view-list-symbolic");
+        gtk_button_new_from_icon_name("go-jump-symbolic");
 
+    gtk_image_set_pixel_size(GTK_IMAGE(application_icon), 24);
+    gtk_accessible_update_property(
+        GTK_ACCESSIBLE(application_icon),
+        GTK_ACCESSIBLE_PROPERTY_LABEL,
+        "MiniText",
+        -1
+    );
     set_button_accessible_name(new_button, "Yeni");
     set_button_accessible_name(open_button, "Aç");
     set_button_accessible_name(save_button, "Kaydet");
-    set_button_accessible_name(save_as_button, "Farklı Kaydet");
     set_button_accessible_name(find_button, "Bul");
     set_button_accessible_name(go_to_line_button, "Satıra Git");
     gtk_widget_set_tooltip_text(new_button, "Yeni (Ctrl+N)");
     gtk_widget_set_tooltip_text(open_button, "Aç (Ctrl+O)");
     gtk_widget_set_tooltip_text(save_button, "Kaydet (Ctrl+S)");
-    gtk_widget_set_tooltip_text(save_as_button, "Farklı Kaydet (Ctrl+Shift+S)");
     gtk_widget_set_tooltip_text(find_button, "Bul (Ctrl+F)");
     gtk_widget_set_tooltip_text(go_to_line_button, "Satıra Git (Ctrl+L)");
     gtk_actionable_set_action_name(GTK_ACTIONABLE(new_button), "app.new");
     gtk_actionable_set_action_name(GTK_ACTIONABLE(open_button), "app.open");
     gtk_actionable_set_action_name(GTK_ACTIONABLE(save_button), "app.save");
-    gtk_actionable_set_action_name(
-        GTK_ACTIONABLE(save_as_button),
-        "app.save-as"
-    );
     gtk_actionable_set_action_name(GTK_ACTIONABLE(find_button), "app.find");
     gtk_actionable_set_action_name(
         GTK_ACTIONABLE(go_to_line_button),
         "app.go-to-line"
     );
+    adw_header_bar_pack_start(ADW_HEADER_BAR(header), application_icon);
     adw_header_bar_pack_start(ADW_HEADER_BAR(header), new_button);
     adw_header_bar_pack_start(ADW_HEADER_BAR(header), open_button);
     adw_header_bar_pack_start(ADW_HEADER_BAR(header), find_button);
     adw_header_bar_pack_start(ADW_HEADER_BAR(header), go_to_line_button);
-    adw_header_bar_pack_end(ADW_HEADER_BAR(header), save_as_button);
     adw_header_bar_pack_end(ADW_HEADER_BAR(header), save_button);
 
     state->search_bar = GTK_SEARCH_BAR(gtk_search_bar_new());
@@ -682,6 +855,7 @@ mini_text_window_new(GtkApplication *application)
         "Metinde ara"
     );
     gtk_widget_set_hexpand(GTK_WIDGET(state->search_entry), TRUE);
+    GtkWidget *search_content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     GtkWidget *search_controls = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     GtkWidget *previous_button =
         gtk_button_new_from_icon_name("go-previous-symbolic");
@@ -694,7 +868,66 @@ mini_text_window_new(GtkApplication *application)
     gtk_box_append(GTK_BOX(search_controls), GTK_WIDGET(state->search_entry));
     gtk_box_append(GTK_BOX(search_controls), previous_button);
     gtk_box_append(GTK_BOX(search_controls), next_button);
-    gtk_search_bar_set_child(state->search_bar, search_controls);
+    gtk_box_append(GTK_BOX(search_content), search_controls);
+
+    state->replace_revealer = gtk_revealer_new();
+    gtk_revealer_set_transition_type(
+        GTK_REVEALER(state->replace_revealer),
+        GTK_REVEALER_TRANSITION_TYPE_SLIDE_DOWN
+    );
+    GtkWidget *replace_controls = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    state->replace_entry = GTK_ENTRY(gtk_entry_new());
+    gtk_entry_set_placeholder_text(state->replace_entry, "Yeni metin");
+    gtk_widget_set_hexpand(GTK_WIDGET(state->replace_entry), TRUE);
+    GtkWidget *replace_button_current = new_labeled_icon_button(
+        "edit-find-symbolic",
+        "Değiştir"
+    );
+    GtkWidget *replace_button_all = new_labeled_icon_button(
+        "edit-find-replace-symbolic",
+        "Tümünü Değiştir"
+    );
+    set_button_accessible_name(
+        replace_button_current,
+        "Seçili eşleşmeyi değiştir"
+    );
+    set_button_accessible_name(
+        replace_button_all,
+        "Tüm eşleşmeleri değiştir"
+    );
+    GtkWidget *replace_buttons = gtk_box_new(
+        GTK_ORIENTATION_HORIZONTAL,
+        6
+    );
+    gtk_widget_set_halign(replace_buttons, GTK_ALIGN_END);
+    gtk_box_append(GTK_BOX(replace_controls), GTK_WIDGET(state->replace_entry));
+    gtk_box_append(GTK_BOX(replace_buttons), replace_button_current);
+    gtk_box_append(GTK_BOX(replace_buttons), replace_button_all);
+    gtk_box_append(GTK_BOX(replace_controls), replace_buttons);
+    GtkWidget *replace_content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_box_append(GTK_BOX(replace_content), replace_controls);
+    state->case_sensitive = GTK_CHECK_BUTTON(
+        gtk_check_button_new_with_label("Büyük/küçük harfe duyarlı")
+    );
+    gtk_box_append(GTK_BOX(replace_content), GTK_WIDGET(state->case_sensitive));
+    gtk_revealer_set_child(
+        GTK_REVEALER(state->replace_revealer),
+        replace_content
+    );
+    gtk_box_append(
+        GTK_BOX(search_content),
+        state->replace_revealer
+    );
+    state->search_status = GTK_LABEL(gtk_label_new(""));
+    gtk_label_set_xalign(state->search_status, 0.0f);
+    gtk_widget_add_css_class(GTK_WIDGET(state->search_status), "dim-label");
+    gtk_widget_set_visible(GTK_WIDGET(state->search_status), FALSE);
+    gtk_box_append(GTK_BOX(search_content), GTK_WIDGET(state->search_status));
+    gtk_widget_set_margin_top(search_content, 6);
+    gtk_widget_set_margin_bottom(search_content, 6);
+    gtk_widget_set_margin_start(search_content, 12);
+    gtk_widget_set_margin_end(search_content, 12);
+    gtk_search_bar_set_child(state->search_bar, search_content);
     gtk_search_bar_set_show_close_button(state->search_bar, TRUE);
     gtk_search_bar_set_key_capture_widget(state->search_bar, window);
     g_signal_connect(
@@ -715,6 +948,46 @@ mini_text_window_new(GtkApplication *application)
         G_CALLBACK(on_find_next),
         state
     );
+    GtkEventController *search_keys = gtk_event_controller_key_new();
+    g_signal_connect(
+        search_keys,
+        "key-pressed",
+        G_CALLBACK(on_search_entry_key_pressed),
+        state
+    );
+    gtk_widget_add_controller(
+        GTK_WIDGET(state->search_entry),
+        search_keys
+    );
+    GtkEventController *replace_keys = gtk_event_controller_key_new();
+    g_signal_connect(
+        replace_keys,
+        "key-pressed",
+        G_CALLBACK(on_search_entry_key_pressed),
+        state
+    );
+    gtk_widget_add_controller(
+        GTK_WIDGET(state->replace_entry),
+        replace_keys
+    );
+    g_signal_connect(
+        replace_button_current,
+        "clicked",
+        G_CALLBACK(on_replace_current),
+        state
+    );
+    g_signal_connect(
+        replace_button_all,
+        "clicked",
+        G_CALLBACK(on_replace_all),
+        state
+    );
+    g_signal_connect(
+        state->case_sensitive,
+        "toggled",
+        G_CALLBACK(on_case_sensitive_toggled),
+        state
+    );
 
     gtk_box_append(GTK_BOX(root), header);
     gtk_box_append(GTK_BOX(root), GTK_WIDGET(state->search_bar));
@@ -733,6 +1006,8 @@ mini_text_window_new(GtkApplication *application)
 
     // Hamburger menü
     GMenu *menu = g_menu_new();
+    g_menu_append(menu, "Bul ve Değiştir", "app.replace");
+    g_menu_append(menu, "Farklı Kaydet", "app.save-as");
     g_menu_append(menu, "Hakkında", "app.about");
 
     GtkWidget *menu_button = gtk_menu_button_new();
@@ -782,8 +1057,26 @@ mini_text_window_activate_action(GtkWindow *window,
         show_save_dialog(state);
         break;
     case MINITEXT_WINDOW_ACTION_FIND:
+        gtk_revealer_set_reveal_child(
+            GTK_REVEALER(state->replace_revealer),
+            FALSE
+        );
         gtk_search_bar_set_search_mode(state->search_bar, TRUE);
         gtk_widget_grab_focus(GTK_WIDGET(state->search_entry));
+        break;
+    case MINITEXT_WINDOW_ACTION_REPLACE:
+        gtk_revealer_set_reveal_child(
+            GTK_REVEALER(state->replace_revealer),
+            TRUE
+        );
+        gtk_search_bar_set_search_mode(state->search_bar, TRUE);
+        gtk_widget_grab_focus(GTK_WIDGET(state->search_entry));
+        break;
+    case MINITEXT_WINDOW_ACTION_UNDO:
+        gtk_text_buffer_undo(mini_text_editor_get_buffer(state->editor));
+        break;
+    case MINITEXT_WINDOW_ACTION_REDO:
+        gtk_text_buffer_redo(mini_text_editor_get_buffer(state->editor));
         break;
     case MINITEXT_WINDOW_ACTION_GO_TO_LINE:
         show_go_to_line_dialog(state);
