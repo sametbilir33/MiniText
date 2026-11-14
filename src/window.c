@@ -523,11 +523,15 @@ open_file_in_tab(MiniTextWindowState *state,
     );
     document->loading = FALSE;
     if (!loaded) {
-        show_error(state, "Dosya açılamadı", error->message);
-        g_clear_error(&error);
-        document_unref(document);
-        return FALSE;
-    }
+    const char *message = error != NULL
+        ? error->message
+        : "Dosya açılamadı. Dosya mevcut olmayabilir veya erişilemiyor olabilir.";
+
+    show_error(state, "Dosya açılamadı", message);
+    g_clear_error(&error);
+    document_unref(document);
+    return FALSE;
+}
 
     if (empty_document != NULL) {
         GtkTextBuffer *loaded_buffer = mini_text_editor_get_buffer(

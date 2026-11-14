@@ -383,7 +383,8 @@ mini_text_application_run(int argc, char **argv)
         g_free(accelerator);
         g_free(action);
     }
-
+    
+    g_signal_connect(application, "activate", G_CALLBACK(on_activate), NULL);
     g_signal_connect(application, "open", G_CALLBACK(on_open), NULL);
 
     int status = g_application_run(

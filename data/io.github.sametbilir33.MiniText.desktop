@@ -2,7 +2,7 @@
 [Desktop Entry]
 Name=MiniText
 Comment=A lightweight text editor
-Exec=minitext
+Exec=minitext %F
 Icon=io.github.sametbilir33.MiniText
 Terminal=false
 Type=Application
