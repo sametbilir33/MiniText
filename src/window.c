@@ -733,7 +733,7 @@ mini_text_window_new(GtkApplication *application)
 
     // Hamburger menü
     GMenu *menu = g_menu_new();
-    g_menu_append(menu, "Hakkında MiniText", "app.about");
+    g_menu_append(menu, "Hakkında", "app.about");
 
     GtkWidget *menu_button = gtk_menu_button_new();
 
