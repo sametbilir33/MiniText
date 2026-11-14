@@ -49,3 +49,12 @@ if(BUILD_TESTING)
         USES_TERMINAL
     )
 endif()
+
+include(GNUInstallDirs)
+
+install(
+    DIRECTORY
+        "${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor/"
+    DESTINATION
+        "${CMAKE_INSTALL_DATADIR}/icons/hicolor"
+)

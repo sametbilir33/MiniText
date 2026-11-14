@@ -97,6 +97,30 @@ on_action_go_to_line(GSimpleAction *action,
 }
 
 static void
+on_action_about(GSimpleAction *action,
+                GVariant *parameter,
+                gpointer user_data)
+{
+    (void)action;
+    (void)parameter;
+
+    GtkApplication *app = GTK_APPLICATION(user_data);
+    GtkWidget *parent = GTK_WIDGET(
+    gtk_application_get_active_window(app)
+);
+
+    adw_show_about_dialog(
+        parent,
+        "application-name", "MiniText",
+        "application-icon", "io.github.sametbilir33.MiniText",
+        "developer-name", "Samet Bilir",
+        "comments", "Minimalist bir metin düzenleyici.",
+        "website", "https://github.com/sametbilir33",
+        NULL
+    );
+}
+
+static void
 add_action(AdwApplication *application,
            const char *name,
            GCallback callback)
@@ -112,6 +136,12 @@ on_activate(GtkApplication *application, gpointer user_data)
 {
     (void)user_data;
 
+GtkIconTheme *theme = gtk_icon_theme_get_for_display(
+    gdk_display_get_default()
+);
+
+gtk_icon_theme_add_search_path(theme, "data/icons");
+
     GList *windows = gtk_application_get_windows(application);
     if (windows != NULL) {
         gtk_window_present(GTK_WINDOW(windows->data));
@@ -126,7 +156,7 @@ int
 mini_text_application_run(int argc, char **argv)
 {
     AdwApplication *application = adw_application_new(
-        "com.example.MiniText",
+        "io.github.sametbilir33.MiniText",
         G_APPLICATION_DEFAULT_FLAGS
     );
 
@@ -136,7 +166,7 @@ mini_text_application_run(int argc, char **argv)
     add_action(application, "save-as", G_CALLBACK(on_action_save_as));
     add_action(application, "find", G_CALLBACK(on_action_find));
     add_action(application, "go-to-line", G_CALLBACK(on_action_go_to_line));
-
+    add_action(application, "about", G_CALLBACK(on_action_about));
     gtk_application_set_accels_for_action(
         GTK_APPLICATION(application),
         "app.new",

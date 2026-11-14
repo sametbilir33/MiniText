@@ -729,7 +729,31 @@ mini_text_window_new(GtkApplication *application)
         state
     );
     g_signal_connect(window, "close-request", G_CALLBACK(on_close_request), NULL);
-    update_title(state);
+        update_title(state);
+
+    // Hamburger menü
+    GMenu *menu = g_menu_new();
+    g_menu_append(menu, "Hakkında MiniText", "app.about");
+
+    GtkWidget *menu_button = gtk_menu_button_new();
+
+    gtk_menu_button_set_icon_name(
+        GTK_MENU_BUTTON(menu_button),
+        "open-menu-symbolic"
+    );
+
+    gtk_menu_button_set_menu_model(
+        GTK_MENU_BUTTON(menu_button),
+        G_MENU_MODEL(menu)
+    );
+
+    adw_header_bar_pack_end(
+        ADW_HEADER_BAR(header),
+        menu_button
+    );
+
+    g_object_unref(menu);
+
     return GTK_WINDOW(window);
 }
 
