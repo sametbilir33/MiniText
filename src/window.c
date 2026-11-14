@@ -5,15 +5,21 @@
 
 #include <adwaita.h>
 
-typedef enum {
-    PENDING_ACTION_NONE,
-    PENDING_ACTION_NEW,
-    PENDING_ACTION_OPEN,
-    PENDING_ACTION_CLOSE
-} PendingAction;
-
 typedef struct {
+    guint ref_count;
+    struct _MiniTextWindowState *state;
+    MiniTextEditor *editor;
+    GFile *file;
+    AdwTabPage *page;
+    gboolean modified;
+    gboolean loading;
+} MiniTextDocument;
+
+typedef struct _MiniTextWindowState {
     GtkWindow *window;
+    AdwTabView *tab_view;
+    AdwTabBar *tab_bar;
+    AdwWindowTitle *window_title;
     MiniTextEditor *editor;
     GtkSearchBar *search_bar;
     GtkSearchEntry *search_entry;
@@ -24,10 +30,32 @@ typedef struct {
     GFile *file;
     gboolean modified;
     gboolean loading;
-    PendingAction pending_action;
+    gboolean closing_window;
+    gboolean allow_window_close;
+    gboolean close_prompt_active;
+    gboolean close_requested_during_prompt;
+    GtkCssProvider *drop_css_provider;
 } MiniTextWindowState;
 
-static void continue_pending_action(MiniTextWindowState *state);
+typedef struct {
+    GtkWindow *window;
+    MiniTextDocument *document;
+    AdwTabPage *page;
+    gboolean window_close;
+} MiniTextCloseContext;
+
+typedef struct {
+    GtkWindow *window;
+    MiniTextDocument *document;
+    MiniTextCloseContext *close_context;
+} MiniTextSaveContext;
+
+static void continue_window_close(MiniTextWindowState *state);
+static void add_file_drop_target(MiniTextWindowState *state, GtkWidget *widget);
+static void show_discard_dialog(MiniTextWindowState *state,
+                                MiniTextDocument *document,
+                                AdwTabPage *page,
+                                gboolean window_close);
 
 static MiniTextWindowState *
 get_state(GtkWindow *window)
@@ -46,19 +74,16 @@ set_button_accessible_name(GtkWidget *button, const char *name)
     );
 }
 
-static GtkWidget *
-new_labeled_icon_button(const char *icon_name, const char *label)
+static void
+on_error_dialog_response(GObject *source,
+                         GAsyncResult *result,
+                         gpointer user_data)
 {
-    GtkWidget *button = gtk_button_new();
-    GtkWidget *content = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-    GtkWidget *icon = gtk_image_new_from_icon_name(icon_name);
-    GtkWidget *text = gtk_label_new(label);
-
-    gtk_box_append(GTK_BOX(content), icon);
-    gtk_box_append(GTK_BOX(content), text);
-    gtk_button_set_child(GTK_BUTTON(button), content);
-    set_button_accessible_name(button, label);
-    return button;
+    (void)user_data;
+    (void)adw_alert_dialog_choose_finish(
+        ADW_ALERT_DIALOG(source),
+        result
+    );
 }
 
 static void
@@ -66,9 +91,19 @@ show_error(MiniTextWindowState *state,
            const char *message,
            const char *detail)
 {
-    GtkAlertDialog *dialog = gtk_alert_dialog_new("%s", message);
-    gtk_alert_dialog_set_detail(dialog, detail);
-    gtk_alert_dialog_show(dialog, state->window);
+    AdwAlertDialog *dialog = ADW_ALERT_DIALOG(
+        adw_alert_dialog_new(message, detail)
+    );
+    adw_alert_dialog_add_response(dialog, "close", "Kapat");
+    adw_alert_dialog_set_close_response(dialog, "close");
+    adw_alert_dialog_set_default_response(dialog, "close");
+    adw_alert_dialog_choose(
+        dialog,
+        GTK_WIDGET(state->window),
+        NULL,
+        on_error_dialog_response,
+        NULL
+    );
     g_object_unref(dialog);
 }
 
@@ -85,13 +120,109 @@ update_title(MiniTextWindowState *state)
     char *name = state->file != NULL
         ? g_file_get_basename(state->file)
         : g_strdup("Yeni Belge");
+    gtk_window_set_title(state->window, name);
+    adw_window_title_set_title(state->window_title, name);
+    adw_window_title_set_subtitle(
+        state->window_title,
+        state->modified ? "Değiştirildi" : "MiniText"
+    );
+    g_free(name);
+}
+
+static void
+update_tab_bar_visibility(MiniTextWindowState *state)
+{
+    gtk_widget_set_visible(
+        GTK_WIDGET(state->tab_bar),
+        adw_tab_view_get_n_pages(state->tab_view) > 1
+    );
+}
+
+static void
+on_tab_view_page_count_changed(GObject *object,
+                               GParamSpec *pspec,
+                               gpointer user_data)
+{
+    (void)object;
+    (void)pspec;
+    update_tab_bar_visibility(user_data);
+}
+
+static MiniTextDocument *
+document_ref(MiniTextDocument *document)
+{
+    document->ref_count++;
+    return document;
+}
+
+static void
+document_unref(MiniTextDocument *document)
+{
+    if (--document->ref_count != 0)
+        return;
+
+    g_clear_object(&document->file);
+    mini_text_editor_free(document->editor);
+    g_free(document);
+}
+
+static MiniTextDocument *
+get_page_document(AdwTabPage *page)
+{
+    return g_object_get_data(G_OBJECT(page), "mini-text-document");
+}
+
+static MiniTextDocument *
+get_active_document(MiniTextWindowState *state)
+{
+    AdwTabPage *page = adw_tab_view_get_selected_page(state->tab_view);
+    return page != NULL ? get_page_document(page) : NULL;
+}
+
+static void
+update_document_title(MiniTextDocument *document)
+{
+    char *name = document->file != NULL
+        ? g_file_get_basename(document->file)
+        : g_strdup("Yeni Belge");
+    char *tooltip = document->file != NULL
+        ? g_file_get_uri(document->file)
+        : g_strdup(name);
     char *title = g_strdup_printf("%s%s",
-                                  state->modified ? "● " : "",
+                                  document->modified ? "*" : "",
                                   name);
 
-    gtk_window_set_title(state->window, title);
+    adw_tab_page_set_title(document->page, title);
+    adw_tab_page_set_tooltip(document->page, tooltip);
+    if (get_active_document(document->state) == document) {
+        document->state->editor = document->editor;
+        g_set_object(&document->state->file, document->file);
+        document->state->modified = document->modified;
+        document->state->loading = document->loading;
+        update_title(document->state);
+    }
+
     g_free(title);
     g_free(name);
+    g_free(tooltip);
+}
+
+static void
+on_selected_page_changed(GObject *object,
+                         GParamSpec *pspec,
+                         gpointer user_data)
+{
+    (void)object;
+    (void)pspec;
+    MiniTextWindowState *state = user_data;
+    MiniTextDocument *document = get_active_document(state);
+    state->editor = document != NULL ? document->editor : NULL;
+    g_clear_object(&state->file);
+    if (document != NULL && document->file != NULL)
+        state->file = g_object_ref(document->file);
+    state->modified = document != NULL && document->modified;
+    state->loading = document != NULL && document->loading;
+    update_title(state);
 }
 
 static void
@@ -99,31 +230,119 @@ on_text_changed(GtkTextBuffer *buffer, gpointer user_data)
 {
     (void)buffer;
 
-    MiniTextWindowState *state = user_data;
-    if (state->loading)
+    MiniTextDocument *document = user_data;
+    if (document->loading)
         return;
 
-    state->modified = TRUE;
-    update_title(state);
+    document->modified = TRUE;
+    update_document_title(document);
 }
 
 static gboolean
-finish_save(MiniTextWindowState *state, GFile *file)
+finish_document_save(MiniTextWindowState *state,
+                     MiniTextDocument *document,
+                     GFile *file)
 {
     GError *error = NULL;
     if (!file_manager_save(
             file,
-            mini_text_editor_get_buffer(state->editor),
+            mini_text_editor_get_buffer(document->editor),
             &error)) {
         show_error(state, "Dosya kaydedilemedi", error->message);
         g_error_free(error);
         return FALSE;
     }
 
-    g_set_object(&state->file, file);
-    state->modified = FALSE;
-    update_title(state);
+    g_set_object(&document->file, file);
+    document->modified = FALSE;
+    update_document_title(document);
     return TRUE;
+}
+
+static gboolean
+finish_save(MiniTextWindowState *state, GFile *file)
+{
+    MiniTextDocument *document = get_active_document(state);
+    return document != NULL &&
+        finish_document_save(state, document, file);
+}
+
+static void
+free_close_context(MiniTextCloseContext *context)
+{
+    if (context == NULL)
+        return;
+
+    g_clear_object(&context->window);
+    document_unref(context->document);
+    g_clear_object(&context->page);
+    g_free(context);
+}
+
+static void
+resolve_close_context(MiniTextCloseContext *context, gboolean proceed)
+{
+    MiniTextWindowState *state = get_state(context->window);
+    state->close_prompt_active = FALSE;
+
+    if (context->window_close) {
+        if (proceed)
+            continue_window_close(state);
+        else
+            state->closing_window = FALSE;
+    } else if (proceed) {
+        AdwTabView *view = state->tab_view;
+        if (adw_tab_view_get_n_pages(view) <= 1) {
+            GtkTextBuffer *buffer = mini_text_editor_get_buffer(
+                context->document->editor
+            );
+            context->document->loading = TRUE;
+            gtk_text_buffer_begin_irreversible_action(buffer);
+            gtk_text_buffer_set_text(buffer, "", -1);
+            gtk_text_buffer_end_irreversible_action(buffer);
+            context->document->loading = FALSE;
+            g_clear_object(&context->document->file);
+            context->document->modified = FALSE;
+            update_document_title(context->document);
+            adw_tab_view_close_page_finish(view, context->page, FALSE);
+        } else {
+            adw_tab_view_close_page_finish(view, context->page, TRUE);
+        }
+    } else if (!context->window_close) {
+        adw_tab_view_close_page_finish(
+            state->tab_view,
+            context->page,
+            FALSE
+        );
+    }
+
+    if (!context->window_close && state->close_requested_during_prompt) {
+        state->close_requested_during_prompt = FALSE;
+        state->closing_window = TRUE;
+        continue_window_close(state);
+    }
+
+    free_close_context(context);
+}
+
+static void
+continue_window_close(MiniTextWindowState *state)
+{
+    int page_count = adw_tab_view_get_n_pages(state->tab_view);
+    for (int position = 0; position < page_count; position++) {
+        AdwTabPage *page = adw_tab_view_get_nth_page(
+            state->tab_view,
+            position
+        );
+        MiniTextDocument *document = get_page_document(page);
+        if (document->modified) {
+            show_discard_dialog(state, document, NULL, TRUE);
+            return;
+        }
+    }
+
+    state->allow_window_close = TRUE;
+    gtk_window_close(state->window);
 }
 
 static void
@@ -131,7 +350,8 @@ on_save_response(GObject *source,
                  GAsyncResult *result,
                  gpointer user_data)
 {
-    GtkWindow *window = GTK_WINDOW(user_data);
+    MiniTextSaveContext *context = user_data;
+    GtkWindow *window = context->window;
     MiniTextWindowState *state = get_state(window);
     GError *error = NULL;
     GFile *file = gtk_file_dialog_save_finish(
@@ -139,17 +359,18 @@ on_save_response(GObject *source,
         result,
         &error
     );
-    gboolean save_dialog_completed = file != NULL;
 
     if (file != NULL) {
-        gboolean saved = finish_save(state, file);
+        gboolean saved = finish_document_save(
+            state,
+            context->document,
+            file
+        );
         g_object_unref(file);
-
-        if (state->pending_action != PENDING_ACTION_NONE) {
-            if (saved)
-                continue_pending_action(state);
-            else
-                state->pending_action = PENDING_ACTION_NONE;
+        if (context->close_context != NULL) {
+            MiniTextCloseContext *close_context = context->close_context;
+            context->close_context = NULL;
+            resolve_close_context(close_context, saved);
         }
     } else if (error != NULL &&
                !g_error_matches(
@@ -159,37 +380,196 @@ on_save_response(GObject *source,
         show_error(state, "Kaydetme hatası", error->message);
     }
 
-    g_clear_error(&error);
-    if (!save_dialog_completed &&
-        state->pending_action != PENDING_ACTION_NONE) {
-        state->pending_action = PENDING_ACTION_NONE;
+    if (file == NULL && context->close_context != NULL) {
+        MiniTextCloseContext *close_context = context->close_context;
+        context->close_context = NULL;
+        resolve_close_context(close_context, FALSE);
     }
-    g_object_unref(window);
+    g_clear_error(&error);
+    g_object_unref(context->window);
+    document_unref(context->document);
+    free_close_context(context->close_context);
+    g_free(context);
 }
 
 static void
-show_save_dialog(MiniTextWindowState *state)
+show_save_dialog_for_document(MiniTextWindowState *state,
+                              MiniTextDocument *document,
+                              MiniTextCloseContext *close_context)
 {
     GtkFileDialog *dialog = gtk_file_dialog_new();
     gtk_file_dialog_set_title(dialog, "Dosyayı Kaydet");
 
-    char *initial_name = state->file != NULL
-        ? g_file_get_basename(state->file)
+    char *initial_name = document->file != NULL
+        ? g_file_get_basename(document->file)
         : g_strdup("belge.txt");
     gtk_file_dialog_set_initial_name(dialog, initial_name);
     g_free(initial_name);
 
-    if (state->file != NULL)
-        gtk_file_dialog_set_initial_file(dialog, state->file);
+    if (document->file != NULL)
+        gtk_file_dialog_set_initial_file(dialog, document->file);
+
+    MiniTextSaveContext *context = g_new0(MiniTextSaveContext, 1);
+    context->window = g_object_ref(state->window);
+    context->document = document_ref(document);
+    context->close_context = close_context;
 
     gtk_file_dialog_save(
         dialog,
         state->window,
         NULL,
         on_save_response,
-        g_object_ref(state->window)
+        context
     );
     g_object_unref(dialog);
+}
+
+static void
+show_save_dialog(MiniTextWindowState *state)
+{
+    MiniTextDocument *document = get_active_document(state);
+    if (document != NULL)
+        show_save_dialog_for_document(state, document, NULL);
+}
+
+static MiniTextDocument *
+create_document(MiniTextWindowState *state)
+{
+    MiniTextDocument *document = g_new0(MiniTextDocument, 1);
+    document->ref_count = 1;
+    document->state = state;
+    document->editor = mini_text_editor_new();
+    gtk_text_buffer_set_enable_undo(
+        mini_text_editor_get_buffer(document->editor),
+        TRUE
+    );
+    g_signal_connect(
+        mini_text_editor_get_buffer(document->editor),
+        "changed",
+        G_CALLBACK(on_text_changed),
+        document
+    );
+    add_file_drop_target(
+        state,
+        mini_text_editor_get_widget(document->editor)
+    );
+    return document;
+}
+
+static void
+add_document(MiniTextWindowState *state, MiniTextDocument *document)
+{
+    GtkWidget *child = mini_text_editor_get_widget(document->editor);
+    document->page = adw_tab_view_append(state->tab_view, child);
+    g_object_set_data_full(
+        G_OBJECT(document->page),
+        "mini-text-document",
+        document,
+        (GDestroyNotify)document_unref
+    );
+    adw_tab_view_set_selected_page(state->tab_view, document->page);
+    update_document_title(document);
+}
+
+static MiniTextDocument *
+find_document_for_file(MiniTextWindowState *state, GFile *file)
+{
+    int page_count = adw_tab_view_get_n_pages(state->tab_view);
+    for (int position = 0; position < page_count; position++) {
+        AdwTabPage *page = adw_tab_view_get_nth_page(
+            state->tab_view,
+            position
+        );
+        MiniTextDocument *document = get_page_document(page);
+        if (document->file != NULL && g_file_equal(document->file, file))
+            return document;
+    }
+
+    return NULL;
+}
+
+static MiniTextDocument *
+get_reusable_empty_document(MiniTextWindowState *state)
+{
+    MiniTextDocument *document = get_active_document(state);
+    if (document == NULL || document->file != NULL || document->modified)
+        return NULL;
+
+    GtkTextBuffer *buffer = mini_text_editor_get_buffer(document->editor);
+    return gtk_text_buffer_get_char_count(buffer) == 0 ? document : NULL;
+}
+
+static gboolean
+open_file_in_tab(MiniTextWindowState *state,
+                 GFile *file,
+                 gboolean reuse_empty_document)
+{
+    MiniTextDocument *existing = find_document_for_file(state, file);
+    if (existing != NULL) {
+        adw_tab_view_set_selected_page(state->tab_view, existing->page);
+        return TRUE;
+    }
+
+    MiniTextDocument *empty_document = reuse_empty_document
+        ? get_reusable_empty_document(state)
+        : NULL;
+    MiniTextDocument *document = create_document(state);
+    GError *error = NULL;
+    document->loading = TRUE;
+    gboolean loaded = file_manager_load(
+        file,
+        mini_text_editor_get_buffer(document->editor),
+        &error
+    );
+    document->loading = FALSE;
+    if (!loaded) {
+        show_error(state, "Dosya açılamadı", error->message);
+        g_clear_error(&error);
+        document_unref(document);
+        return FALSE;
+    }
+
+    if (empty_document != NULL) {
+        GtkTextBuffer *loaded_buffer = mini_text_editor_get_buffer(
+            document->editor
+        );
+        GtkTextIter start;
+        GtkTextIter end;
+        gtk_text_buffer_get_bounds(loaded_buffer, &start, &end);
+        char *contents = gtk_text_buffer_get_text(
+            loaded_buffer,
+            &start,
+            &end,
+            FALSE
+        );
+
+        GtkTextBuffer *empty_buffer = mini_text_editor_get_buffer(
+            empty_document->editor
+        );
+        empty_document->loading = TRUE;
+        gtk_text_buffer_begin_irreversible_action(empty_buffer);
+        gtk_text_buffer_set_text(empty_buffer, contents, -1);
+        gtk_text_buffer_end_irreversible_action(empty_buffer);
+        empty_document->loading = FALSE;
+        g_set_object(&empty_document->file, file);
+        empty_document->modified = FALSE;
+        update_document_title(empty_document);
+
+        g_free(contents);
+        document_unref(document);
+        return TRUE;
+    }
+
+    g_set_object(&document->file, file);
+    add_document(state, document);
+    return TRUE;
+}
+
+gboolean
+mini_text_window_open_file(GtkWindow *window, GFile *file)
+{
+    MiniTextWindowState *state = get_state(window);
+    return state != NULL && open_file_in_tab(state, file, TRUE);
 }
 
 static void
@@ -207,22 +587,7 @@ on_open_response(GObject *source,
     );
 
     if (file != NULL) {
-        state->loading = TRUE;
-        gboolean loaded = file_manager_load(
-            file,
-            mini_text_editor_get_buffer(state->editor),
-            &error
-        );
-        state->loading = FALSE;
-
-        if (loaded) {
-            g_set_object(&state->file, file);
-            state->modified = FALSE;
-            update_title(state);
-        } else {
-            show_error(state, "Dosya açılamadı", error->message);
-        }
-
+        mini_text_window_open_file(window, file);
         g_object_unref(file);
     } else if (error != NULL &&
                !g_error_matches(
@@ -252,116 +617,115 @@ show_open_dialog(MiniTextWindowState *state)
 }
 
 static void
-clear_document(MiniTextWindowState *state)
-{
-    GtkTextBuffer *buffer = mini_text_editor_get_buffer(state->editor);
-    state->loading = TRUE;
-    gtk_text_buffer_begin_irreversible_action(buffer);
-    gtk_text_buffer_set_text(buffer, "", -1);
-    gtk_text_buffer_end_irreversible_action(buffer);
-    state->loading = FALSE;
-    g_clear_object(&state->file);
-    state->modified = FALSE;
-    update_title(state);
-}
-
-static void
-continue_pending_action(MiniTextWindowState *state)
-{
-    PendingAction action = state->pending_action;
-    state->pending_action = PENDING_ACTION_NONE;
-
-    switch (action) {
-    case PENDING_ACTION_NEW:
-        clear_document(state);
-        break;
-    case PENDING_ACTION_OPEN:
-        show_open_dialog(state);
-        break;
-    case PENDING_ACTION_CLOSE:
-        gtk_window_destroy(state->window);
-        break;
-    case PENDING_ACTION_NONE:
-        break;
-    }
-}
-
-static void
 on_discard_response(GObject *source,
                     GAsyncResult *result,
                     gpointer user_data)
 {
-    GtkWindow *window = GTK_WINDOW(user_data);
-    MiniTextWindowState *state = get_state(window);
-    GError *error = NULL;
-    int choice = gtk_alert_dialog_choose_finish(
-        GTK_ALERT_DIALOG(source),
-        result,
-        &error
+    MiniTextCloseContext *context = user_data;
+    MiniTextWindowState *state = get_state(context->window);
+    const char *response = adw_alert_dialog_choose_finish(
+        ADW_ALERT_DIALOG(source),
+        result
     );
 
-    if (error != NULL || choice == 0) {
-        state->pending_action = PENDING_ACTION_NONE;
-    } else if (choice == 1) {
-        if (state->file != NULL) {
-            if (finish_save(state, state->file))
-                continue_pending_action(state);
-            else
-                state->pending_action = PENDING_ACTION_NONE;
+    if (g_strcmp0(response, "cancel") == 0) {
+        resolve_close_context(context, FALSE);
+    } else if (g_strcmp0(response, "save") == 0) {
+        if (context->document->file != NULL) {
+            gboolean saved = finish_document_save(
+                state,
+                context->document,
+                context->document->file
+            );
+            resolve_close_context(context, saved);
         } else {
-            show_save_dialog(state);
+            show_save_dialog_for_document(
+                state,
+                context->document,
+                context
+            );
         }
-    } else if (choice == 2) {
-        continue_pending_action(state);
+    } else if (g_strcmp0(response, "discard") == 0) {
+        resolve_close_context(context, TRUE);
     } else {
-        state->pending_action = PENDING_ACTION_NONE;
+        resolve_close_context(context, FALSE);
     }
 
-    g_clear_error(&error);
-    g_object_unref(window);
 }
 
 static void
-show_discard_dialog(MiniTextWindowState *state, PendingAction action)
+show_discard_dialog(MiniTextWindowState *state,
+                    MiniTextDocument *document,
+                    AdwTabPage *page,
+                    gboolean window_close)
 {
-    state->pending_action = action;
-    GtkAlertDialog *dialog = gtk_alert_dialog_new(
-        "Kaydedilmemiş değişiklikler var"
+    state->close_prompt_active = TRUE;
+    MiniTextCloseContext *context = g_new0(MiniTextCloseContext, 1);
+    context->window = g_object_ref(state->window);
+    context->document = document_ref(document);
+    context->page = page != NULL ? g_object_ref(page) : NULL;
+    context->window_close = window_close;
+
+    AdwAlertDialog *dialog = ADW_ALERT_DIALOG(
+        adw_alert_dialog_new(
+            "Kaydedilmemiş Değişiklikler",
+            "Bu belgeyi kaydetmek istiyor musunuz?"
+        )
     );
-    gtk_alert_dialog_set_detail(
+    adw_alert_dialog_add_responses(
         dialog,
-        "Devam edersen mevcut değişiklikler kaybolacak."
-    );
-    const char *buttons[] = {
-        "İptal",
-        "Kaydet",
-        "Değişiklikleri At",
+        "cancel", "İptal",
+        "save", "Kaydet",
+        "discard", "Kaydetmeden Kapat",
         NULL
-    };
-    gtk_alert_dialog_set_buttons(dialog, buttons);
-    gtk_alert_dialog_set_cancel_button(dialog, 0);
-    gtk_alert_dialog_set_default_button(dialog, 0);
-    gtk_alert_dialog_choose(
+    );
+    adw_alert_dialog_set_response_appearance(
         dialog,
-        state->window,
+        "discard",
+        ADW_RESPONSE_DESTRUCTIVE
+    );
+    adw_alert_dialog_set_close_response(dialog, "cancel");
+    adw_alert_dialog_set_default_response(dialog, "save");
+    adw_alert_dialog_choose(
+        dialog,
+        GTK_WIDGET(state->window),
         NULL,
         on_discard_response,
-        g_object_ref(state->window)
+        context
     );
     g_object_unref(dialog);
 }
 
-static void
-request_document_action(MiniTextWindowState *state, PendingAction action)
+static gboolean
+on_tab_close_page(AdwTabView *view,
+                  AdwTabPage *page,
+                  gpointer user_data)
 {
-    if (state->pending_action != PENDING_ACTION_NONE)
-        return;
+    MiniTextWindowState *state = user_data;
+    if (state->close_prompt_active) {
+        adw_tab_view_close_page_finish(view, page, FALSE);
+        return GDK_EVENT_STOP;
+    }
 
-    state->pending_action = action;
-    if (state->modified)
-        show_discard_dialog(state, action);
-    else
-        continue_pending_action(state);
+    MiniTextDocument *document = get_page_document(page);
+    if (document->modified) {
+        show_discard_dialog(state, document, page, FALSE);
+    } else if (adw_tab_view_get_n_pages(view) > 1) {
+        adw_tab_view_close_page_finish(view, page, TRUE);
+    } else {
+        GtkTextBuffer *buffer = mini_text_editor_get_buffer(document->editor);
+        document->loading = TRUE;
+        gtk_text_buffer_begin_irreversible_action(buffer);
+        gtk_text_buffer_set_text(buffer, "", -1);
+        gtk_text_buffer_end_irreversible_action(buffer);
+        document->loading = FALSE;
+        g_clear_object(&document->file);
+        document->modified = FALSE;
+        update_document_title(document);
+        adw_tab_view_close_page_finish(view, page, FALSE);
+    }
+
+    return GDK_EVENT_STOP;
 }
 
 static gboolean
@@ -686,6 +1050,217 @@ on_go_to_line_cancel(GtkButton *button, gpointer user_data)
     gtk_window_destroy(GTK_WINDOW(user_data));
 }
 
+static gboolean
+on_go_to_line_key_pressed(GtkEventControllerKey *controller,
+                          guint keyval,
+                          guint keycode,
+                          GdkModifierType state_flags,
+                          gpointer user_data)
+{
+    (void)controller;
+    (void)keycode;
+    (void)state_flags;
+
+    if (keyval != GDK_KEY_Escape)
+        return FALSE;
+
+    gtk_window_destroy(GTK_WINDOW(user_data));
+    return TRUE;
+}
+
+static void
+show_keyboard_shortcuts(MiniTextWindowState *state)
+{
+    static const char shortcuts_ui[] =
+        "<interface>"
+        "  <object class='GtkShortcutsWindow' id='shortcuts'>"
+        "    <property name='title'>Klavye Kısayolları</property>"
+        "    <property name='modal'>1</property>"
+        "    <property name='default-width'>650</property>"
+        "    <child>"
+        "      <object class='GtkShortcutsSection'>"
+        "        <property name='section-name'>shortcuts</property>"
+        "        <property name='max-height'>12</property>"
+        "        <child>"
+        "          <object class='GtkShortcutsGroup'>"
+        "            <property name='title'>Dosya ve Sekmeler</property>"
+        "            <child><object class='GtkShortcutsShortcut'>"
+        "              <property name='accelerator'>&lt;Control&gt;n</property>"
+        "              <property name='title'>Yeni sekme</property>"
+        "            </object></child>"
+        "            <child><object class='GtkShortcutsShortcut'>"
+        "              <property name='accelerator'>&lt;Control&gt;o</property>"
+        "              <property name='title'>Dosya aç</property>"
+        "            </object></child>"
+        "            <child><object class='GtkShortcutsShortcut'>"
+        "              <property name='accelerator'>&lt;Control&gt;s</property>"
+        "              <property name='title'>Kaydet</property>"
+        "            </object></child>"
+        "            <child><object class='GtkShortcutsShortcut'>"
+        "              <property name='accelerator'>&lt;Control&gt;&lt;Shift&gt;s</property>"
+        "              <property name='title'>Farklı kaydet</property>"
+        "            </object></child>"
+        "            <child><object class='GtkShortcutsShortcut'>"
+        "              <property name='accelerator'>&lt;Control&gt;w</property>"
+        "              <property name='title'>Sekmeyi kapat</property>"
+        "            </object></child>"
+        "            <child><object class='GtkShortcutsShortcut'>"
+        "              <property name='accelerator'>&lt;Control&gt;Tab</property>"
+        "              <property name='title'>Sonraki sekme</property>"
+        "            </object></child>"
+        "            <child><object class='GtkShortcutsShortcut'>"
+        "              <property name='accelerator'>&lt;Control&gt;&lt;Shift&gt;Tab</property>"
+        "              <property name='title'>Önceki sekme</property>"
+        "            </object></child>"
+        "            <child><object class='GtkShortcutsShortcut'>"
+        "              <property name='accelerator'>&lt;Control&gt;1...&lt;Control&gt;9</property>"
+        "              <property name='title'>Sekme 1-9</property>"
+        "            </object></child>"
+        "          </object>"
+        "        </child>"
+        "        <child>"
+        "          <object class='GtkShortcutsGroup'>"
+        "            <property name='title'>Düzenleme</property>"
+        "            <child><object class='GtkShortcutsShortcut'>"
+        "              <property name='accelerator'>&lt;Control&gt;z</property>"
+        "              <property name='title'>Geri al</property>"
+        "            </object></child>"
+        "            <child><object class='GtkShortcutsShortcut'>"
+        "              <property name='accelerator'>&lt;Control&gt;&lt;Shift&gt;z</property>"
+        "              <property name='title'>Yinele</property>"
+        "            </object></child>"
+        "            <child><object class='GtkShortcutsShortcut'>"
+        "              <property name='accelerator'>&lt;Control&gt;y</property>"
+        "              <property name='title'>Yinele</property>"
+        "            </object></child>"
+        "            <child><object class='GtkShortcutsShortcut'>"
+        "              <property name='accelerator'>&lt;Control&gt;l</property>"
+        "              <property name='title'>Satıra git</property>"
+        "            </object></child>"
+        "          </object>"
+        "        </child>"
+        "        <child>"
+        "          <object class='GtkShortcutsGroup'>"
+        "            <property name='title'>Bul ve Yardım</property>"
+        "            <child><object class='GtkShortcutsShortcut'>"
+        "              <property name='accelerator'>&lt;Control&gt;f</property>"
+        "              <property name='title'>Bul</property>"
+        "            </object></child>"
+        "            <child><object class='GtkShortcutsShortcut'>"
+        "              <property name='accelerator'>&lt;Control&gt;h</property>"
+        "              <property name='title'>Bul ve değiştir</property>"
+        "            </object></child>"
+        "            <child><object class='GtkShortcutsShortcut'>"
+        "              <property name='accelerator'>&lt;Control&gt;question</property>"
+        "              <property name='title'>Klavye kısayolları</property>"
+        "            </object></child>"
+        "            <child><object class='GtkShortcutsShortcut'>"
+        "              <property name='accelerator'>&lt;Control&gt;comma</property>"
+        "              <property name='title'>Hakkında</property>"
+        "            </object></child>"
+        "          </object>"
+        "        </child>"
+        "      </object>"
+        "    </child>"
+        "  </object>"
+        "</interface>";
+
+    GtkBuilder *builder = gtk_builder_new();
+    GError *error = NULL;
+    if (!gtk_builder_add_from_string(
+            builder,
+            shortcuts_ui,
+            sizeof(shortcuts_ui) - 1,
+            &error)) {
+        show_error(state, "Klavye kısayolları açılamadı", error->message);
+        g_clear_error(&error);
+        g_object_unref(builder);
+        return;
+    }
+
+    GtkWindow *shortcuts = GTK_WINDOW(
+        g_object_ref(gtk_builder_get_object(builder, "shortcuts"))
+    );
+    g_object_unref(builder);
+    gtk_window_set_transient_for(shortcuts, state->window);
+    gtk_window_present(shortcuts);
+}
+
+static GdkDragAction
+on_drop_enter(GtkDropTarget *target,
+              double x,
+              double y,
+              gpointer user_data)
+{
+    (void)target;
+    (void)x;
+    (void)y;
+    gtk_widget_add_css_class(GTK_WIDGET(user_data), "drop-active");
+    return GDK_ACTION_COPY;
+}
+
+static void
+on_drop_leave(GtkDropTarget *target, gpointer user_data)
+{
+    (void)target;
+    gtk_widget_remove_css_class(GTK_WIDGET(user_data), "drop-active");
+}
+
+static gboolean
+on_files_dropped(GtkDropTarget *target,
+                 const GValue *value,
+                 double x,
+                 double y,
+                 gpointer user_data)
+{
+    (void)target;
+    (void)x;
+    (void)y;
+
+    MiniTextWindowState *state = user_data;
+    GdkFileList *file_list = g_value_get_boxed(value);
+    GSList *files = gdk_file_list_get_files(file_list);
+    gtk_widget_remove_css_class(
+        gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(target)),
+        "drop-active"
+    );
+    gboolean handled = FALSE;
+    for (GSList *item = files; item != NULL; item = item->next) {
+        open_file_in_tab(state, G_FILE(item->data), FALSE);
+        handled = TRUE;
+    }
+    return handled;
+}
+
+static void
+add_file_drop_target(MiniTextWindowState *state, GtkWidget *widget)
+{
+    GtkDropTarget *target = gtk_drop_target_new(
+        GDK_TYPE_FILE_LIST,
+        GDK_ACTION_COPY
+    );
+    gtk_drop_target_set_preload(target, TRUE);
+    g_signal_connect(
+        target,
+        "enter",
+        G_CALLBACK(on_drop_enter),
+        widget
+    );
+    g_signal_connect(
+        target,
+        "leave",
+        G_CALLBACK(on_drop_leave),
+        widget
+    );
+    g_signal_connect(
+        target,
+        "drop",
+        G_CALLBACK(on_files_dropped),
+        state
+    );
+    gtk_widget_add_controller(widget, GTK_EVENT_CONTROLLER(target));
+}
+
 static void
 show_go_to_line_dialog(MiniTextWindowState *state)
 {
@@ -705,14 +1280,24 @@ show_go_to_line_dialog(MiniTextWindowState *state)
     gtk_window_set_modal(dialog, TRUE);
     gtk_window_set_resizable(dialog, FALSE);
 
-    GtkWidget *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    GtkWidget *header = adw_header_bar_new();
+    GtkWidget *title = adw_window_title_new("Satıra Git", NULL);
+    adw_header_bar_set_title_widget(ADW_HEADER_BAR(header), title);
+    gtk_window_set_titlebar(dialog, header);
+
+    GtkWidget *body = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    gtk_widget_set_margin_top(body, 18);
+    gtk_widget_set_margin_bottom(body, 18);
+    gtk_widget_set_margin_start(body, 18);
+    gtk_widget_set_margin_end(body, 18);
     GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
-    GtkWidget *label = gtk_label_new("Satır numarası:");
+    GtkWidget *label = gtk_label_new_with_mnemonic("_Satır numarası:");
     GtkWidget *spin_button = gtk_spin_button_new_with_range(
         1,
         line_count,
         1
     );
+    gtk_label_set_mnemonic_widget(GTK_LABEL(label), spin_button);
     gtk_spin_button_set_value(
         GTK_SPIN_BUTTON(spin_button),
         MIN(current_line, line_count)
@@ -720,22 +1305,17 @@ show_go_to_line_dialog(MiniTextWindowState *state)
     gtk_box_append(GTK_BOX(row), label);
     gtk_box_append(GTK_BOX(row), spin_button);
     GtkWidget *buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-    GtkWidget *cancel_button =
-        new_labeled_icon_button("window-close-symbolic", "İptal");
-    GtkWidget *go_button =
-        new_labeled_icon_button("object-select-symbolic", "Git");
+    GtkWidget *cancel_button = gtk_button_new_with_label("İptal");
+    GtkWidget *go_button = gtk_button_new_with_label("Git");
+    gtk_widget_add_css_class(go_button, "suggested-action");
     gtk_widget_set_halign(buttons, GTK_ALIGN_END);
     gtk_box_append(GTK_BOX(buttons), cancel_button);
     gtk_box_append(GTK_BOX(buttons), go_button);
-    gtk_box_append(GTK_BOX(content), row);
-    gtk_box_append(GTK_BOX(content), buttons);
-    gtk_widget_set_margin_top(content, 12);
-    gtk_widget_set_margin_bottom(content, 12);
-    gtk_widget_set_margin_start(content, 12);
-    gtk_widget_set_margin_end(content, 12);
-    gtk_window_set_child(dialog, content);
+    gtk_box_append(GTK_BOX(body), row);
+    gtk_box_append(GTK_BOX(body), buttons);
+    gtk_window_set_child(dialog, body);
+
     gtk_window_set_default_widget(dialog, go_button);
-    gtk_widget_grab_focus(spin_button);
     g_object_set_data(
         G_OBJECT(dialog),
         "line-number-spin-button",
@@ -753,7 +1333,16 @@ show_go_to_line_dialog(MiniTextWindowState *state)
         G_CALLBACK(on_go_to_line_cancel),
         dialog
     );
+    GtkEventController *keys = gtk_event_controller_key_new();
+    g_signal_connect(
+        keys,
+        "key-pressed",
+        G_CALLBACK(on_go_to_line_key_pressed),
+        dialog
+    );
+    gtk_widget_add_controller(GTK_WIDGET(dialog), keys);
     gtk_window_present(dialog);
+    gtk_widget_grab_focus(spin_button);
 }
 
 static gboolean
@@ -762,11 +1351,19 @@ on_close_request(GtkWindow *window, gpointer user_data)
     (void)user_data;
 
     MiniTextWindowState *state = get_state(window);
-    if (!state->modified)
+    if (state->allow_window_close)
         return FALSE;
 
-    if (state->pending_action == PENDING_ACTION_NONE)
-        show_discard_dialog(state, PENDING_ACTION_CLOSE);
+    if (state->close_prompt_active) {
+        if (!state->closing_window)
+            state->close_requested_during_prompt = TRUE;
+        return TRUE;
+    }
+
+    if (!state->closing_window) {
+        state->closing_window = TRUE;
+        continue_window_close(state);
+    }
     return TRUE;
 }
 
@@ -775,7 +1372,13 @@ on_window_state_free(gpointer user_data)
 {
     MiniTextWindowState *state = user_data;
     g_clear_object(&state->file);
-    mini_text_editor_free(state->editor);
+    if (state->drop_css_provider != NULL) {
+        gtk_style_context_remove_provider_for_display(
+            gdk_display_get_default(),
+            GTK_STYLE_PROVIDER(state->drop_css_provider)
+        );
+        g_clear_object(&state->drop_css_provider);
+    }
     g_free(state);
 }
 
@@ -789,11 +1392,8 @@ mini_text_window_new(GtkApplication *application)
 
     MiniTextWindowState *state = g_new0(MiniTextWindowState, 1);
     state->window = GTK_WINDOW(window);
-    state->editor = mini_text_editor_new();
-    gtk_text_buffer_set_enable_undo(
-        mini_text_editor_get_buffer(state->editor),
-        TRUE
-    );
+    state->tab_view = ADW_TAB_VIEW(adw_tab_view_new());
+    state->tab_bar = ADW_TAB_BAR(adw_tab_bar_new());
     g_object_set_data_full(
         G_OBJECT(window),
         "mini-text-window-state",
@@ -802,50 +1402,43 @@ mini_text_window_new(GtkApplication *application)
     );
 
     GtkWidget *root = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    state->drop_css_provider = gtk_css_provider_new();
+    gtk_css_provider_load_from_string(
+        state->drop_css_provider,
+        ".drop-active { box-shadow: inset 0 0 0 2px @accent_bg_color; }"
+    );
+    gtk_style_context_add_provider_for_display(
+        gdk_display_get_default(),
+        GTK_STYLE_PROVIDER(state->drop_css_provider),
+        GTK_STYLE_PROVIDER_PRIORITY_APPLICATION
+    );
+    add_file_drop_target(state, root);
+
     GtkWidget *header = adw_header_bar_new();
-    GtkWidget *application_icon =
-        gtk_image_new_from_icon_name("io.github.sametbilir33.MiniText");
-    GtkWidget *new_button =
-        gtk_button_new_from_icon_name("document-new-symbolic");
     GtkWidget *open_button =
         gtk_button_new_from_icon_name("document-open-symbolic");
     GtkWidget *save_button =
         gtk_button_new_from_icon_name("document-save-symbolic");
     GtkWidget *find_button =
         gtk_button_new_from_icon_name("edit-find-symbolic");
-    GtkWidget *go_to_line_button =
-        gtk_button_new_from_icon_name("go-jump-symbolic");
-
-    gtk_image_set_pixel_size(GTK_IMAGE(application_icon), 24);
-    gtk_accessible_update_property(
-        GTK_ACCESSIBLE(application_icon),
-        GTK_ACCESSIBLE_PROPERTY_LABEL,
-        "MiniText",
-        -1
-    );
-    set_button_accessible_name(new_button, "Yeni");
     set_button_accessible_name(open_button, "Aç");
     set_button_accessible_name(save_button, "Kaydet");
     set_button_accessible_name(find_button, "Bul");
-    set_button_accessible_name(go_to_line_button, "Satıra Git");
-    gtk_widget_set_tooltip_text(new_button, "Yeni (Ctrl+N)");
     gtk_widget_set_tooltip_text(open_button, "Aç (Ctrl+O)");
     gtk_widget_set_tooltip_text(save_button, "Kaydet (Ctrl+S)");
     gtk_widget_set_tooltip_text(find_button, "Bul (Ctrl+F)");
-    gtk_widget_set_tooltip_text(go_to_line_button, "Satıra Git (Ctrl+L)");
-    gtk_actionable_set_action_name(GTK_ACTIONABLE(new_button), "app.new");
     gtk_actionable_set_action_name(GTK_ACTIONABLE(open_button), "app.open");
     gtk_actionable_set_action_name(GTK_ACTIONABLE(save_button), "app.save");
     gtk_actionable_set_action_name(GTK_ACTIONABLE(find_button), "app.find");
-    gtk_actionable_set_action_name(
-        GTK_ACTIONABLE(go_to_line_button),
-        "app.go-to-line"
+    state->window_title = ADW_WINDOW_TITLE(
+        adw_window_title_new("Yeni Belge", "MiniText")
     );
-    adw_header_bar_pack_start(ADW_HEADER_BAR(header), application_icon);
-    adw_header_bar_pack_start(ADW_HEADER_BAR(header), new_button);
     adw_header_bar_pack_start(ADW_HEADER_BAR(header), open_button);
     adw_header_bar_pack_start(ADW_HEADER_BAR(header), find_button);
-    adw_header_bar_pack_start(ADW_HEADER_BAR(header), go_to_line_button);
+    adw_header_bar_set_title_widget(
+        ADW_HEADER_BAR(header),
+        GTK_WIDGET(state->window_title)
+    );
     adw_header_bar_pack_end(ADW_HEADER_BAR(header), save_button);
 
     state->search_bar = GTK_SEARCH_BAR(gtk_search_bar_new());
@@ -879,22 +1472,10 @@ mini_text_window_new(GtkApplication *application)
     state->replace_entry = GTK_ENTRY(gtk_entry_new());
     gtk_entry_set_placeholder_text(state->replace_entry, "Yeni metin");
     gtk_widget_set_hexpand(GTK_WIDGET(state->replace_entry), TRUE);
-    GtkWidget *replace_button_current = new_labeled_icon_button(
-        "edit-find-symbolic",
-        "Değiştir"
-    );
-    GtkWidget *replace_button_all = new_labeled_icon_button(
-        "edit-find-replace-symbolic",
-        "Tümünü Değiştir"
-    );
-    set_button_accessible_name(
-        replace_button_current,
-        "Seçili eşleşmeyi değiştir"
-    );
-    set_button_accessible_name(
-        replace_button_all,
-        "Tüm eşleşmeleri değiştir"
-    );
+    GtkWidget *replace_button_current =
+        gtk_button_new_with_label("Değiştir");
+    GtkWidget *replace_button_all =
+        gtk_button_new_with_label("Tümünü Değiştir");
     GtkWidget *replace_buttons = gtk_box_new(
         GTK_ORIENTATION_HORIZONTAL,
         6
@@ -990,25 +1571,55 @@ mini_text_window_new(GtkApplication *application)
     );
 
     gtk_box_append(GTK_BOX(root), header);
+    adw_tab_bar_set_view(state->tab_bar, state->tab_view);
+    adw_tab_bar_set_autohide(state->tab_bar, TRUE);
+    add_file_drop_target(state, GTK_WIDGET(state->tab_bar));
+    GtkWidget *new_button = gtk_button_new_from_icon_name("list-add-symbolic");
+    gtk_widget_add_css_class(new_button, "flat");
+    gtk_widget_set_tooltip_text(new_button, "Yeni Sekme (Ctrl+N)");
+    set_button_accessible_name(new_button, "Yeni Sekme");
+    gtk_actionable_set_action_name(GTK_ACTIONABLE(new_button), "app.new");
+    adw_tab_bar_set_end_action_widget(state->tab_bar, new_button);
+    gtk_box_append(GTK_BOX(root), GTK_WIDGET(state->tab_bar));
     gtk_box_append(GTK_BOX(root), GTK_WIDGET(state->search_bar));
-    gtk_box_append(GTK_BOX(root), mini_text_editor_get_widget(state->editor));
-    gtk_widget_set_vexpand(mini_text_editor_get_widget(state->editor), TRUE);
+    gtk_box_append(GTK_BOX(root), GTK_WIDGET(state->tab_view));
+    gtk_widget_set_vexpand(GTK_WIDGET(state->tab_view), TRUE);
     adw_application_window_set_content(ADW_APPLICATION_WINDOW(window), root);
 
     g_signal_connect(
-        mini_text_editor_get_buffer(state->editor),
-        "changed",
-        G_CALLBACK(on_text_changed),
+        state->tab_view,
+        "close-page",
+        G_CALLBACK(on_tab_close_page),
+        state
+    );
+    g_signal_connect(
+        state->tab_view,
+        "notify::selected-page",
+        G_CALLBACK(on_selected_page_changed),
+        state
+    );
+    g_signal_connect(
+        state->tab_view,
+        "notify::n-pages",
+        G_CALLBACK(on_tab_view_page_count_changed),
         state
     );
     g_signal_connect(window, "close-request", G_CALLBACK(on_close_request), NULL);
-        update_title(state);
+    add_document(state, create_document(state));
+    update_tab_bar_visibility(state);
+    update_title(state);
 
     // Hamburger menü
     GMenu *menu = g_menu_new();
-    g_menu_append(menu, "Bul ve Değiştir", "app.replace");
-    g_menu_append(menu, "Farklı Kaydet", "app.save-as");
-    g_menu_append(menu, "Hakkında", "app.about");
+    GMenu *document_menu = g_menu_new();
+    GMenu *help_menu = g_menu_new();
+    g_menu_append(document_menu, "Bul ve Değiştir", "app.replace");
+    g_menu_append(document_menu, "Satıra Git", "app.go-to-line");
+    g_menu_append(document_menu, "Farklı Kaydet", "app.save-as");
+    g_menu_append(help_menu, "Klavye Kısayolları", "app.shortcuts");
+    g_menu_append(help_menu, "MiniText Hakkında", "app.about");
+    g_menu_append_section(menu, NULL, G_MENU_MODEL(document_menu));
+    g_menu_append_section(menu, NULL, G_MENU_MODEL(help_menu));
 
     GtkWidget *menu_button = gtk_menu_button_new();
 
@@ -1016,6 +1627,8 @@ mini_text_window_new(GtkApplication *application)
         GTK_MENU_BUTTON(menu_button),
         "open-menu-symbolic"
     );
+    gtk_widget_set_tooltip_text(menu_button, "Ana Menü");
+    set_button_accessible_name(menu_button, "Ana Menü");
 
     gtk_menu_button_set_menu_model(
         GTK_MENU_BUTTON(menu_button),
@@ -1028,6 +1641,8 @@ mini_text_window_new(GtkApplication *application)
     );
 
     g_object_unref(menu);
+    g_object_unref(document_menu);
+    g_object_unref(help_menu);
 
     return GTK_WINDOW(window);
 }
@@ -1042,10 +1657,10 @@ mini_text_window_activate_action(GtkWindow *window,
 
     switch (action) {
     case MINITEXT_WINDOW_ACTION_NEW:
-        request_document_action(state, PENDING_ACTION_NEW);
+        add_document(state, create_document(state));
         break;
     case MINITEXT_WINDOW_ACTION_OPEN:
-        request_document_action(state, PENDING_ACTION_OPEN);
+        show_open_dialog(state);
         break;
     case MINITEXT_WINDOW_ACTION_SAVE:
         if (state->file != NULL)
@@ -1080,6 +1695,59 @@ mini_text_window_activate_action(GtkWindow *window,
         break;
     case MINITEXT_WINDOW_ACTION_GO_TO_LINE:
         show_go_to_line_dialog(state);
+        break;
+    case MINITEXT_WINDOW_ACTION_SHORTCUTS:
+        show_keyboard_shortcuts(state);
+        break;
+    case MINITEXT_WINDOW_ACTION_CLOSE_TAB: {
+        AdwTabPage *page = adw_tab_view_get_selected_page(state->tab_view);
+        if (page != NULL)
+            adw_tab_view_close_page(state->tab_view, page);
+        break;
+    }
+    case MINITEXT_WINDOW_ACTION_NEXT_TAB: {
+        int count = adw_tab_view_get_n_pages(state->tab_view);
+        if (count > 1) {
+            AdwTabPage *page = adw_tab_view_get_selected_page(state->tab_view);
+            int position = adw_tab_view_get_page_position(
+                state->tab_view,
+                page
+            );
+            int next = (position + 1) % count;
+            adw_tab_view_set_selected_page(
+                state->tab_view,
+                adw_tab_view_get_nth_page(state->tab_view, next)
+            );
+        }
+        break;
+    }
+    case MINITEXT_WINDOW_ACTION_PREVIOUS_TAB: {
+        int count = adw_tab_view_get_n_pages(state->tab_view);
+        if (count > 1) {
+            AdwTabPage *page = adw_tab_view_get_selected_page(state->tab_view);
+            int position = adw_tab_view_get_page_position(
+                state->tab_view,
+                page
+            );
+            int previous = (position + count - 1) % count;
+            adw_tab_view_set_selected_page(
+                state->tab_view,
+                adw_tab_view_get_nth_page(state->tab_view, previous)
+            );
+        }
+        break;
+    }
+    default:
+        if (action >= MINITEXT_WINDOW_ACTION_SELECT_TAB_1 &&
+            action <= MINITEXT_WINDOW_ACTION_SELECT_TAB_9) {
+            int position = action - MINITEXT_WINDOW_ACTION_SELECT_TAB_1;
+            if (position < adw_tab_view_get_n_pages(state->tab_view)) {
+                adw_tab_view_set_selected_page(
+                    state->tab_view,
+                    adw_tab_view_get_nth_page(state->tab_view, position)
+                );
+            }
+        }
         break;
     }
 }

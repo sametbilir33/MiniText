@@ -58,6 +58,7 @@ mini_text_editor_new(void)
     gtk_widget_set_hexpand(text_scroller, TRUE);
     gtk_widget_set_vexpand(content, TRUE);
     editor->widget = content;
+    g_object_ref_sink(editor->widget);
 
     return editor;
 }
@@ -68,6 +69,7 @@ mini_text_editor_free(MiniTextEditor *editor)
     if (editor == NULL)
         return;
 
+    g_object_unref(editor->widget);
     g_clear_object(&editor->buffer);
     g_clear_object(&editor->vertical_adjustment);
     g_free(editor);

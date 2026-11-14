@@ -8,7 +8,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(GTK4 REQUIRED IMPORTED_TARGET gtk4 libadwaita-1)
+pkg_check_modules(GTK4 REQUIRED IMPORTED_TARGET gtk4>=4.10 libadwaita-1>=1.5)
 
 set(MINITEXT_SOURCES
     src/application.c
