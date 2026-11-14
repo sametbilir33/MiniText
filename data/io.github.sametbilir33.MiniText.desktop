@@ -1,0 +1,10 @@
+
+[Desktop Entry]
+Name=MiniText
+Comment=A lightweight text editor
+Exec=minitext
+Icon=io.github.sametbilir33.MiniText
+Terminal=false
+Type=Application
+Categories=Utility;TextEditor;
+StartupNotify=true

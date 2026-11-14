@@ -53,6 +53,25 @@ endif()
 include(GNUInstallDirs)
 
 install(
+    TARGETS minitext
+    RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+)
+
+install(
+    FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/data/io.github.sametbilir33.MiniText.desktop"
+    DESTINATION
+        "${CMAKE_INSTALL_DATADIR}/applications"
+)
+
+install(
+    FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/data/metainfo/io.github.sametbilir33.MiniText.metainfo.xml"
+    DESTINATION
+        "${CMAKE_INSTALL_DATADIR}/metainfo"
+)
+
+install(
     DIRECTORY
         "${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor/"
     DESTINATION

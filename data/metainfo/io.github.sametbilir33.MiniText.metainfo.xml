@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.sametbilir33.MiniText</id>
+
+  <name>MiniText</name>
+  <summary>A lightweight and simple text editor</summary>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+
+  <developer id="io.github.sametbilir33">
+    <name>Samet Bilir</name>
+  </developer>
+
+  <description>
+    <p>
+      MiniText is a lightweight text editor designed for simple
+      and efficient plain-text editing. Its clean interface
+      keeps the focus on your documents without unnecessary
+      complexity.
+    </p>
+    <p>
+      Whether you are editing configuration files, taking notes
+      or working with source code, MiniText provides the essential
+      tools for a straightforward editing experience.
+    </p>
+    <ul>
+      <li>Open and save text files</li>
+      <li>Work with multiple documents using tabs</li>
+      <li>Find and replace text</li>
+      <li>Undo and redo editing operations</li>
+      <li>Display line numbers and navigate to specific lines</li>
+      <li>Open files using drag and drop</li>
+      <li>Manage unsaved changes with save prompts</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">
+    io.github.sametbilir33.MiniText.desktop
+  </launchable>
+
+  <icon type="stock">
+    io.github.sametbilir33.MiniText
+  </icon>
+
+  <categories>
+    <category>Utility</category>
+    <category>TextEditor</category>
+  </categories>
+
+  <keywords>
+    <keyword>text editor</keyword>
+    <keyword>plain text</keyword>
+    <keyword>text files</keyword>
+    <keyword>writing</keyword>
+    <keyword>notes</keyword>
+    <keyword>editor</keyword>
+    <keyword xml:lang="tr">metin düzenleyici</keyword>
+    <keyword xml:lang="tr">metin editörü</keyword>
+    <keyword xml:lang="tr">not defteri</keyword>
+  </keywords>
+
+  <provides>
+    <binary>minitext</binary>
+  </provides>
+
+  <url type="homepage">
+    https://github.com/sametbilir33/MiniText
+  </url>
+  <url type="bugtracker">
+    https://github.com/sametbilir33/MiniText/issues
+  </url>
+  <url type="vcs-browser">
+    https://github.com/sametbilir33/MiniText
+  </url>
+
+  <content_rating type="oars-1.1"/>
+</component>

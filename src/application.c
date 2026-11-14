@@ -12,10 +12,8 @@ on_action_new(GSimpleAction *action,
     (void)action;
     (void)parameter;
 
-    GtkWindow *window =
-        gtk_application_get_active_window(GTK_APPLICATION(user_data));
-    if (window != NULL)
-        mini_text_window_activate_action(window, MINITEXT_WINDOW_ACTION_NEW);
+    GtkWindow *window = gtk_application_get_active_window(GTK_APPLICATION(user_data));
+    if (window != NULL) mini_text_window_activate_action(window, MINITEXT_WINDOW_ACTION_NEW);
 }
 
 static void
@@ -26,10 +24,8 @@ on_action_open(GSimpleAction *action,
     (void)action;
     (void)parameter;
 
-    GtkWindow *window =
-        gtk_application_get_active_window(GTK_APPLICATION(user_data));
-    if (window != NULL)
-        mini_text_window_activate_action(window, MINITEXT_WINDOW_ACTION_OPEN);
+    GtkWindow *window = gtk_application_get_active_window(GTK_APPLICATION(user_data));
+    if (window != NULL) mini_text_window_activate_action(window, MINITEXT_WINDOW_ACTION_OPEN);
 }
 
 static void
@@ -40,10 +36,8 @@ on_action_save(GSimpleAction *action,
     (void)action;
     (void)parameter;
 
-    GtkWindow *window =
-        gtk_application_get_active_window(GTK_APPLICATION(user_data));
-    if (window != NULL)
-        mini_text_window_activate_action(window, MINITEXT_WINDOW_ACTION_SAVE);
+    GtkWindow *window = gtk_application_get_active_window(GTK_APPLICATION(user_data));
+    if (window != NULL) mini_text_window_activate_action(window, MINITEXT_WINDOW_ACTION_SAVE);
 }
 
 static void
@@ -54,14 +48,8 @@ on_action_save_as(GSimpleAction *action,
     (void)action;
     (void)parameter;
 
-    GtkWindow *window =
-        gtk_application_get_active_window(GTK_APPLICATION(user_data));
-    if (window != NULL) {
-        mini_text_window_activate_action(
-            window,
-            MINITEXT_WINDOW_ACTION_SAVE_AS
-        );
-    }
+    GtkWindow *window = gtk_application_get_active_window(GTK_APPLICATION(user_data));
+    if (window != NULL) mini_text_window_activate_action(window, MINITEXT_WINDOW_ACTION_SAVE_AS);
 }
 
 static void
@@ -72,10 +60,8 @@ on_action_find(GSimpleAction *action,
     (void)action;
     (void)parameter;
 
-    GtkWindow *window =
-        gtk_application_get_active_window(GTK_APPLICATION(user_data));
-    if (window != NULL)
-        mini_text_window_activate_action(window, MINITEXT_WINDOW_ACTION_FIND);
+    GtkWindow *window = gtk_application_get_active_window(GTK_APPLICATION(user_data));
+    if (window != NULL) mini_text_window_activate_action(window, MINITEXT_WINDOW_ACTION_FIND);
 }
 
 static void
@@ -86,14 +72,8 @@ on_action_replace(GSimpleAction *action,
     (void)action;
     (void)parameter;
 
-    GtkWindow *window =
-        gtk_application_get_active_window(GTK_APPLICATION(user_data));
-    if (window != NULL) {
-        mini_text_window_activate_action(
-            window,
-            MINITEXT_WINDOW_ACTION_REPLACE
-        );
-    }
+    GtkWindow *window = gtk_application_get_active_window(GTK_APPLICATION(user_data));
+    if (window != NULL) mini_text_window_activate_action(window, MINITEXT_WINDOW_ACTION_REPLACE);
 }
 
 static void
@@ -104,10 +84,8 @@ on_action_undo(GSimpleAction *action,
     (void)action;
     (void)parameter;
 
-    GtkWindow *window =
-        gtk_application_get_active_window(GTK_APPLICATION(user_data));
-    if (window != NULL)
-        mini_text_window_activate_action(window, MINITEXT_WINDOW_ACTION_UNDO);
+    GtkWindow *window = gtk_application_get_active_window(GTK_APPLICATION(user_data));
+    if (window != NULL) mini_text_window_activate_action(window, MINITEXT_WINDOW_ACTION_UNDO);
 }
 
 static void
@@ -118,10 +96,8 @@ on_action_redo(GSimpleAction *action,
     (void)action;
     (void)parameter;
 
-    GtkWindow *window =
-        gtk_application_get_active_window(GTK_APPLICATION(user_data));
-    if (window != NULL)
-        mini_text_window_activate_action(window, MINITEXT_WINDOW_ACTION_REDO);
+    GtkWindow *window = gtk_application_get_active_window(GTK_APPLICATION(user_data));
+    if (window != NULL) mini_text_window_activate_action(window, MINITEXT_WINDOW_ACTION_REDO);
 }
 
 static void
@@ -132,14 +108,8 @@ on_action_go_to_line(GSimpleAction *action,
     (void)action;
     (void)parameter;
 
-    GtkWindow *window =
-        gtk_application_get_active_window(GTK_APPLICATION(user_data));
-    if (window != NULL) {
-        mini_text_window_activate_action(
-            window,
-            MINITEXT_WINDOW_ACTION_GO_TO_LINE
-        );
-    }
+    GtkWindow *window = gtk_application_get_active_window(GTK_APPLICATION(user_data));
+    if (window != NULL) mini_text_window_activate_action(window, MINITEXT_WINDOW_ACTION_GO_TO_LINE);
 }
 
 static void
@@ -150,14 +120,8 @@ on_action_close_tab(GSimpleAction *action,
     (void)action;
     (void)parameter;
 
-    GtkWindow *window =
-        gtk_application_get_active_window(GTK_APPLICATION(user_data));
-    if (window != NULL) {
-        mini_text_window_activate_action(
-            window,
-            MINITEXT_WINDOW_ACTION_CLOSE_TAB
-        );
-    }
+    GtkWindow *window = gtk_application_get_active_window(GTK_APPLICATION(user_data));
+    if (window != NULL) mini_text_window_activate_action(window, MINITEXT_WINDOW_ACTION_CLOSE_TAB);
 }
 
 static void
@@ -168,14 +132,8 @@ on_action_next_tab(GSimpleAction *action,
     (void)action;
     (void)parameter;
 
-    GtkWindow *window =
-        gtk_application_get_active_window(GTK_APPLICATION(user_data));
-    if (window != NULL) {
-        mini_text_window_activate_action(
-            window,
-            MINITEXT_WINDOW_ACTION_NEXT_TAB
-        );
-    }
+    GtkWindow *window = gtk_application_get_active_window(GTK_APPLICATION(user_data));
+    if (window != NULL) mini_text_window_activate_action(window, MINITEXT_WINDOW_ACTION_NEXT_TAB);
 }
 
 static void
@@ -186,14 +144,8 @@ on_action_previous_tab(GSimpleAction *action,
     (void)action;
     (void)parameter;
 
-    GtkWindow *window =
-        gtk_application_get_active_window(GTK_APPLICATION(user_data));
-    if (window != NULL) {
-        mini_text_window_activate_action(
-            window,
-            MINITEXT_WINDOW_ACTION_PREVIOUS_TAB
-        );
-    }
+    GtkWindow *window = gtk_application_get_active_window(GTK_APPLICATION(user_data));
+    if (window != NULL) mini_text_window_activate_action(window, MINITEXT_WINDOW_ACTION_PREVIOUS_TAB);
 }
 
 static void
@@ -203,16 +155,10 @@ on_action_select_tab(GSimpleAction *action,
 {
     (void)parameter;
 
-    GtkWindow *window =
-        gtk_application_get_active_window(GTK_APPLICATION(user_data));
+    GtkWindow *window = gtk_application_get_active_window(GTK_APPLICATION(user_data));
     if (window != NULL) {
-        int position = GPOINTER_TO_INT(
-            g_object_get_data(G_OBJECT(action), "tab-position")
-        );
-        mini_text_window_activate_action(
-            window,
-            MINITEXT_WINDOW_ACTION_SELECT_TAB_1 + position
-        );
+        int position = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(action), "tab-position"));
+        mini_text_window_activate_action(window, MINITEXT_WINDOW_ACTION_SELECT_TAB_1 + position);
     }
 }
 
@@ -259,14 +205,8 @@ on_action_shortcuts(GSimpleAction *action,
     (void)action;
     (void)parameter;
 
-    GtkWindow *window =
-        gtk_application_get_active_window(GTK_APPLICATION(user_data));
-    if (window != NULL) {
-        mini_text_window_activate_action(
-            window,
-            MINITEXT_WINDOW_ACTION_SHORTCUTS
-        );
-    }
+    GtkWindow *window = gtk_application_get_active_window(GTK_APPLICATION(user_data));
+    if (window != NULL) mini_text_window_activate_action(window, MINITEXT_WINDOW_ACTION_SHORTCUTS);
 }
 
 static void
@@ -284,12 +224,6 @@ static void
 on_activate(GtkApplication *application, gpointer user_data)
 {
     (void)user_data;
-
-GtkIconTheme *theme = gtk_icon_theme_get_for_display(
-    gdk_display_get_default()
-);
-
-gtk_icon_theme_add_search_path(theme, "data/icons");
 
     GList *windows = gtk_application_get_windows(application);
     if (windows != NULL) {
