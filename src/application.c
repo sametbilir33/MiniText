@@ -235,12 +235,36 @@ on_activate(GtkApplication *application, gpointer user_data)
     gtk_window_present(window);
 }
 
+static void
+on_open(GApplication *application,
+        GFile **files,
+        gint n_files,
+        const char *hint,
+        gpointer user_data)
+{
+    (void)hint;
+    (void)user_data;
+
+    GtkApplication *gtk_application = GTK_APPLICATION(application);
+    GtkWindow *window = gtk_application_get_active_window(gtk_application);
+
+    if (window == NULL) {
+        window = mini_text_window_new(gtk_application);
+    }
+
+    gtk_window_present(window);
+
+    for (gint i = 0; i < n_files; i++) {
+        mini_text_window_open_file(window, files[i]);
+    }
+}
+
 int
 mini_text_application_run(int argc, char **argv)
 {
     AdwApplication *application = adw_application_new(
-        "io.github.sametbilir33.MiniText",
-        G_APPLICATION_DEFAULT_FLAGS
+    "io.github.sametbilir33.MiniText",
+    G_APPLICATION_HANDLES_OPEN
     );
 
     add_action(application, "new", G_CALLBACK(on_action_new));
@@ -360,7 +384,7 @@ mini_text_application_run(int argc, char **argv)
         g_free(action);
     }
 
-    g_signal_connect(application, "activate", G_CALLBACK(on_activate), NULL);
+    g_signal_connect(application, "open", G_CALLBACK(on_open), NULL);
 
     int status = g_application_run(
         G_APPLICATION(application),
