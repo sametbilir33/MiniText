@@ -94,9 +94,11 @@ show_error(MiniTextWindowState *state,
     AdwAlertDialog *dialog = ADW_ALERT_DIALOG(
         adw_alert_dialog_new(message, detail)
     );
+
     adw_alert_dialog_add_response(dialog, "close", "Kapat");
     adw_alert_dialog_set_close_response(dialog, "close");
     adw_alert_dialog_set_default_response(dialog, "close");
+
     adw_alert_dialog_choose(
         dialog,
         GTK_WIDGET(state->window),
@@ -104,7 +106,6 @@ show_error(MiniTextWindowState *state,
         on_error_dialog_response,
         NULL
     );
-    g_object_unref(dialog);
 }
 
 static void
@@ -523,11 +524,22 @@ open_file_in_tab(MiniTextWindowState *state,
     );
     document->loading = FALSE;
     if (!loaded) {
-    const char *message = error != NULL
-        ? error->message
-        : "Dosya açılamadı. Dosya mevcut olmayabilir veya erişilemiyor olabilir.";
+    gboolean not_found = g_error_matches(
+        error,
+        G_IO_ERROR,
+        G_IO_ERROR_NOT_FOUND
+    );
 
-    show_error(state, "Dosya açılamadı", message);
+    const char *message = not_found
+        ? "Belirtilen dosya mevcut değil."
+        : (error != NULL ? error->message : "Dosya açılamadı.");
+
+    show_error(
+        state,
+        not_found ? "Dosya bulunamadı" : "Dosya açılamadı",
+        message
+    );
+
     g_clear_error(&error);
     document_unref(document);
     return FALSE;
