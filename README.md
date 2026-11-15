@@ -1,3 +1,9 @@
+<h1>
+  <img src="data/icons/hicolor/scalable/apps/io.github.sametbilir33.MiniText_Title.svg"
+       width="512" height="512"
+       style="vertical-align: -12px;" />
+</h1>
+
 # MiniText
 
 MiniText is a lightweight GTK 4 and libadwaita text editor for Linux.

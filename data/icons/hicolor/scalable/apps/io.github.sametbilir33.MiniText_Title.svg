@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="260" height="128" viewBox="0 0 260 128">
+  <defs>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#62A0EA"/>
+      <stop offset="1" stop-color="#1C71D8"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Book icon -->
+  <g>
+    <rect x="17" y="12" width="94" height="105"
+          rx="19" fill="#241F31" opacity=".16"/>
+    <rect x="17" y="8" width="94" height="108"
+          rx="19" fill="url(#blue)"/>
+    <rect x="27" y="17" width="74" height="91"
+          rx="10" fill="#F6F5F4"/>
+    <rect x="27" y="17" width="13" height="91"
+          rx="7" fill="#DEDCD8"/>
+    <path d="M46 17 V108"
+          stroke="#C5C2BD" stroke-width="1.5"/>
+
+    <g fill="none" stroke="#797774"
+       stroke-width="3.5" stroke-linecap="round">
+      <path d="M53 41 H87"/>
+      <path d="M53 55 H87"/>
+      <path d="M53 69 H79"/>
+      <path d="M53 83 H84"/>
+    </g>
+
+    <path d="M17 33 H23 M17 49 H23
+             M17 65 H23 M17 81 H23
+             M17 97 H23"
+          stroke="#A8C7FA"
+          stroke-width="2.5"
+          stroke-linecap="round"/>
+  </g>
+
+  <!-- App name -->
+  <text x="132" y="78"
+        text-anchor="start"
+        font-family="sans-serif"
+        font-size="34"
+        font-weight="bold"
+        fill="#424257">MiniText</text>
+</svg>
