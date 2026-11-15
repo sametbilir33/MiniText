@@ -35,11 +35,10 @@
           stroke-linecap="round"/>
   </g>
 
-  <!-- App name -->
-  <text x="132" y="78"
-        text-anchor="start"
-        font-family="sans-serif"
-        font-size="34"
-        font-weight="bold"
-        fill="#424257">MiniText</text>
+<text x="132" y="78"
+      text-anchor="start"
+      font-family="sans-serif"
+      font-size="28"
+      font-weight="bold"
+      fill="#424257">MiniText</text>
 </svg>
