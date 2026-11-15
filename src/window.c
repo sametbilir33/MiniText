@@ -1242,7 +1242,7 @@ on_files_dropped(GtkDropTarget *target,
     );
     gboolean handled = FALSE;
     for (GSList *item = files; item != NULL; item = item->next) {
-        open_file_in_tab(state, G_FILE(item->data), FALSE);
+        open_file_in_tab(state, G_FILE(item->data), TRUE);
         handled = TRUE;
     }
     return handled;
