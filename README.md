@@ -1,7 +1,7 @@
 <h1>
   <img src="data/icons/hicolor/scalable/apps/io.github.sametbilir33.MiniText_Title.svg"
-       width="512" height="512"
-       style="vertical-align: -12px;" />
+       width="520" height="256"
+       alt="MiniText Title" />
 </h1>
 
 # MiniText
