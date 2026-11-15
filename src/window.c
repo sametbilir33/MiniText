@@ -326,6 +326,17 @@ resolve_close_context(MiniTextCloseContext *context, gboolean proceed)
     free_close_context(context);
 }
 
+static gboolean
+close_window_idle(gpointer user_data)
+{
+    GtkWindow *window = GTK_WINDOW(user_data);
+
+    gtk_window_close(window);
+
+    g_object_unref(window);
+    return G_SOURCE_REMOVE;
+}
+
 static void
 continue_window_close(MiniTextWindowState *state)
 {
@@ -343,7 +354,11 @@ continue_window_close(MiniTextWindowState *state)
     }
 
     state->allow_window_close = TRUE;
-    gtk_window_close(state->window);
+
+    g_idle_add(
+        close_window_idle,
+        g_object_ref(state->window)
+    );
 }
 
 static void
